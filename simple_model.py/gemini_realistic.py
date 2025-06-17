@@ -1181,7 +1181,7 @@ if __name__ == "__main__":
         forward_period=3,
         min_confidence=0.55,  # Start with a slightly lower confidence to generate more signals
         use_cache=True,
-        force_refresh=True # SET TO TRUE TO FORCE NEW DATA WITH MULTIINDEX
+        force_refresh=False # SET TO TRUE TO FORCE NEW DATA WITH MULTIINDEX
     )
     
     print("\n🚀 Enhanced Trading System Ready!")
