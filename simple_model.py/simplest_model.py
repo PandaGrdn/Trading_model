@@ -68,7 +68,7 @@ def load_processed_data(filename):
     return None
 
 # Function to fetch and prepare data
-def fetch_and_prepare_data(tickers, period='1y', interval='3d', start_date=None, end_date=None, force_download=False):
+def fetch_and_prepare_data(tickers, period='1y', interval='1d', start_date=None, end_date=None, force_download=False):
     """
     Fetch historical data for cryptocurrencies and calculate basic features.
     Includes caching functionality.
@@ -951,7 +951,7 @@ def main(tickers, train_start_date='2022-01-01', train_end_date='2023-12-31',
         tickers, 
         start_date=train_start_date,
         end_date=train_end_date,
-        interval='3d', # Keep this interval for consistency
+        interval='1d', # Keep this interval for consistency
         force_download=force_download
     )
     
@@ -982,7 +982,7 @@ def main(tickers, train_start_date='2022-01-01', train_end_date='2023-12-31',
     test_data_raw = fetch_and_prepare_data(
         tickers,
         period=yf_period, # Fetch max data
-        interval='3d',
+        interval='1d',
         start_date=test_start_date, # Filter after fetching
         end_date=None, # Let YF fetch up to current, then filter later
         force_download=force_download
@@ -1079,12 +1079,13 @@ def main(tickers, train_start_date='2022-01-01', train_end_date='2023-12-31',
 if __name__ == "__main__":
     crypto_tickers = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'ADA-USD', 'XRP-USD', 
                       'AVAX-USD', 'LINK-USD', 'DOGE-USD']
+    stock_tickers = ['NVDA', 'AAPL', 'MSFT', 'GOOGL', 'TSLA']
     
     # Ensure cache directories exist
     ensure_directories()
 
     model, scaler, signals, performance = main(
-        crypto_tickers, 
+        stock_tickers, 
         train_start_date='2023-01-01',  # Training data from 2023
         train_end_date='2024-03-31',    # Training data until end of March 2024
         test_start_date='2024-04-01',   # Backtesting from start of April 2024
