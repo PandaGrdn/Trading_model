@@ -128,7 +128,7 @@ def calculate_selected_features(data):
     
     return result
 
-def create_prediction_targets(data, forward_period=3):
+def create_prediction_targets(data, forward_period):
     """
     Create prediction targets for a specified forward period (e.g., 3 days)
     """
@@ -262,7 +262,7 @@ def visualize_signals(signals, ticker):
     ax2.set_xlabel('Date'); ax2.set_ylabel('Confidence Score'); ax2.set_ylim(0, 1); ax2.legend(); ax2.grid(True)
     plt.tight_layout(); plt.show()
 
-def analyze_performance(signals, forward_period=3):
+def analyze_performance(signals, forward_period):
     actual_signals = signals[signals['Signal'] == 1].copy()
     if actual_signals.empty:
         print("\nNo trades were generated to analyze.")
@@ -293,8 +293,8 @@ def analyze_performance(signals, forward_period=3):
     
     return {'win_rate': win_rate, 'avg_win': avg_win, 'avg_loss': avg_loss, 'profit_factor': profit_factor}
 
-def main(tickers, train_start_date, train_end_date, test_start_date, test_end_date=None, 
-         forward_period=3, min_confidence=0.55, force_download=False):
+def main(tickers, train_start_date, train_end_date, test_start_date, 
+         forward_period, test_end_date=None, min_confidence=0.55, force_download=False):
     """
     Main function to run the entire pipeline.
     Added force_download flag to control caching.
