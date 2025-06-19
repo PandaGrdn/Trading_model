@@ -71,6 +71,32 @@ def fetch_and_prepare_data(tickers, period='1y', interval='1d', start_date=None,
     
     return all_data
 
+# Add this function somewhere at the top of your script, e.g., after the CACHE_DIR definition
+def get_display_precision(price_series):
+    """
+    Determines the appropriate decimal precision for displaying prices
+    based on the magnitude of the largest price in the series.
+    """
+    max_price = price_series.max()
+    if pd.isna(max_price) or max_price == 0:
+        return 2 # Default for empty or zero prices
+
+    if max_price >= 1000:
+        return 0
+    elif max_price >= 100:
+        return 1
+    elif max_price >= 1:
+        return 2
+    elif max_price >= 0.01: # e.g., $0.1234 -> $0.1234
+        return 4
+    elif max_price >= 0.0001: # e.g., $0.001234 -> $0.001234
+        return 6
+    elif max_price >= 0.000001: # e.g., $0.00000123 -> $0.00000123
+        return 8
+    else: # For extremely small values
+        return 10 # Or even more, depending on typical prices
+    
+    
 def calculate_selected_features(data):
     """
     Calculate only the selected top technical indicators from different feature groups
@@ -133,7 +159,7 @@ def create_prediction_targets(data, forward_period):
     Create prediction targets for a specified forward period (e.g., 3 days)
     """
     data['Future_Return'] = data.groupby('Ticker')['Close'].pct_change(forward_period).shift(-forward_period)
-    data['Target'] = (data['Future_Return'] >= 0.2).astype(int)
+    data['Target'] = (data['Future_Return'] >= 0.02).astype(int)
     data['Return_Magnitude'] = data['Future_Return'].abs()
     return data
 
@@ -363,7 +389,7 @@ if __name__ == "__main__":
             test_start_date='2025-01-01',
             test_end_date=None,
             forward_period=3,
-            min_confidence=0.65,
+            min_confidence=0.55,
             force_download=FORCE_API_DOWNLOAD # Pass the flag here
         )
         
@@ -371,20 +397,28 @@ if __name__ == "__main__":
             print("\n--- Latest Trading Signals ---")
             latest_date = signals.index.max()
             latest_signals = signals[signals.index == latest_date]
-            
+
             if not latest_signals.empty:
+                # Determine precision for the current set of signals based on all 'Close' prices
+                # It's better to calculate precision based on all prices in the signals df for consistency
+                # or specifically for the ticker being displayed.
+                # For latest signals, we can calculate per ticker as well.
                 for _, row in latest_signals.iterrows():
                     if row['Signal'] == 1:
+                        # Get precision for the specific ticker's latest price
+                        current_ticker_data = signals[signals['Ticker'] == row['Ticker']]
+                        precision = get_display_precision(current_ticker_data['Close'])
+
                         print(f"📈 BUY {row['Ticker']} with {row['Position_Size_Pct']:.2f}% of portfolio")
-                        print(f"   - Confidence: {row['Confidence']:.2%}")
-                        print(f"   - Entry Price: ${row['Close']:.2f}")
-                        print(f"   - Stop Loss: ${row['Stop_Loss']:.2f} ({((row['Stop_Loss']/row['Close'])-1)*100:.2f}%)")
-                        print(f"   - Take Profit: ${row['Take_Profit']:.2f} ({((row['Take_Profit']/row['Close'])-1)*100:.2f}%)")
-                        print(f"   - Risk/Reward: {row['Risk_Reward']:.2f}:1\n")
+                        print(f"   - Confidence: {row['Confidence']:.2%}")
+                        print(f"   - Entry Price: ${row['Close']:.{precision}f}") # Use dynamic precision
+                        print(f"   - Stop Loss: ${row['Stop_Loss']:.{precision}f} ({((row['Stop_Loss']/row['Close'])-1)*100:.2f}%)") # Use dynamic precision
+                        print(f"   - Take Profit: ${row['Take_Profit']:.{precision}f} ({((row['Take_Profit']/row['Close'])-1)*100:.2f}%)") # Use dynamic precision
+                        print(f"   - Risk/Reward: {row['Risk_Reward']:.2f}:1\n")
             else:
                 print("No active signals on the latest date.")
 
     except Exception as e:
         print(f"\nAn error occurred: {e}")
         # A common error is an invalid date in the main call. Check your dates.
-        # For instance, the original code had '2024-011-01', which is invalid. Corrected to '2022-01-01'.
+        # For instance, the original code had '2024-011-01', which is invalid. Corrected to '2022-01-01'.\
