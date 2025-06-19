@@ -133,7 +133,7 @@ def create_prediction_targets(data, forward_period=3):
     Create prediction targets for a specified forward period (e.g., 3 days)
     """
     data['Future_Return'] = data.groupby('Ticker')['Close'].pct_change(forward_period).shift(-forward_period)
-    data['Target'] = (data['Future_Return'] >= 0.2).astype(int)
+    data['Target'] = (data['Future_Return'] >= 0.012).astype(int)
     data['Return_Magnitude'] = data['Future_Return'].abs()
     return data
 
@@ -211,19 +211,33 @@ def train_prediction_model(data, features, test_size=0.2):
     
     return final_model, scaler, features
 
-def calculate_position_size(confidence, max_position_pct=5.0, min_confidence=0.55):
-    if confidence < min_confidence: return 0.0
+def calculate_position_size(confidence, max_position_pct=8.0, min_confidence=0.55):
+    """
+    Calculates an aggressive position size based on model confidence.
+    """
+    if confidence < min_confidence:
+        return 0.0
     scaled_confidence = (confidence - min_confidence) / (1.0 - min_confidence)
-    position_size = scaled_confidence * max_position_pct
-    return min(position_size, max_position_pct)
+    base_position_size = scaled_confidence * max_position_pct
+    aggression_multiplier = 1.5
+    aggressive_size = base_position_size * aggression_multiplier
+    final_position_size = min(aggressive_size, max_position_pct)
+
+    return final_position_size
 
 def calculate_risk_metrics(data, price, confidence, volatility_metric='Normalized_ATR'):
+    """
+    Calculates more aggressive stop-loss and take-profit levels.
+    """
     volatility = data[volatility_metric].iloc[-1]
     confidence_factor = 1.0 - ((confidence - 0.5) * 0.5) if confidence > 0.5 else 1.0
-    stop_distance = volatility * price * 2.5 * confidence_factor
+    #changed from 2.5 to 3.0.
+    stop_distance = volatility * price * 3.0 * confidence_factor
     stop_loss = price - stop_distance
-    risk_reward_ratio = 1.5 + confidence
+    #changed from 1.5 to 2.0.
+    risk_reward_ratio = 2.0 + confidence
     take_profit = price + (stop_distance * risk_reward_ratio)
+
     return {'stop_loss': stop_loss, 'take_profit': take_profit, 'risk_reward_ratio': risk_reward_ratio}
 
 def generate_trading_signals(model, scaler, data, features, min_confidence=0.55):
@@ -363,7 +377,7 @@ if __name__ == "__main__":
             test_start_date='2025-01-01',
             test_end_date=None,
             forward_period=3,
-            min_confidence=0.65,
+            min_confidence=0.55,
             force_download=FORCE_API_DOWNLOAD # Pass the flag here
         )
         
