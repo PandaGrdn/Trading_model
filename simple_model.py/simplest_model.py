@@ -133,7 +133,7 @@ def create_prediction_targets(data, forward_period=3):
     Create prediction targets for a specified forward period (e.g., 3 days)
     """
     data['Future_Return'] = data.groupby('Ticker')['Close'].pct_change(forward_period).shift(-forward_period)
-    data['Target'] = (data['Future_Return'] > 0).astype(int)
+    data['Target'] = (data['Future_Return'] >= 0.2).astype(int)
     data['Return_Magnitude'] = data['Future_Return'].abs()
     return data
 
@@ -363,7 +363,7 @@ if __name__ == "__main__":
             test_start_date='2025-01-01',
             test_end_date=None,
             forward_period=3,
-            min_confidence=0.55,
+            min_confidence=0.65,
             force_download=FORCE_API_DOWNLOAD # Pass the flag here
         )
         
