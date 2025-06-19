@@ -133,7 +133,7 @@ def create_prediction_targets(data, forward_period=3):
     Create prediction targets for a specified forward period (e.g., 3 days)
     """
     data['Future_Return'] = data.groupby('Ticker')['Close'].pct_change(forward_period).shift(-forward_period)
-    data['Target'] = (data['Future_Return'] >= 0.012).astype(int)
+    data['Target'] = (data['Future_Return'] >= 0.0).astype(int)
     data['Return_Magnitude'] = data['Future_Return'].abs()
     return data
 
@@ -227,20 +227,59 @@ def calculate_position_size(confidence, max_position_pct=8.0, min_confidence=0.5
 
 def calculate_risk_metrics(data, price, confidence, volatility_metric='Normalized_ATR'):
     """
-    Calculates more aggressive stop-loss and take-profit levels.
+    Calculates highly adaptive and robust risk levels by blending multiple methods
+    and using confidence to adjust tolerance for volatility.
     """
-    volatility = data[volatility_metric].iloc[-1]
-    confidence_factor = 1.0 - ((confidence - 0.5) * 0.5) if confidence > 0.5 else 1.0
-    #changed from 2.5 to 3.0.
-    stop_distance = volatility * price * 3.0 * confidence_factor
-    stop_loss = price - stop_distance
-    #changed from 1.5 to 2.0.
-    risk_reward_ratio = 2.0 + confidence
-    take_profit = price + (stop_distance * risk_reward_ratio)
+    if data.empty or len(data) < 50: # Increased history requirement
+        # Fallback for insufficient data
+        stop_loss = price * 0.85 # Default 15% stop
+        take_profit = price * 1.30 # Default 30% gain
+        return {'stop_loss': stop_loss, 'take_profit': take_profit, 'risk_reward_ratio': 2.0}
 
-    return {'stop_loss': stop_loss, 'take_profit': take_profit, 'risk_reward_ratio': risk_reward_ratio}
+    # --- Step 1: Calculate multiple risk indicators ---
+    
+    # Method A: ATR-based stop distance
+    atr_value = data['ATR'].iloc[-1]
+    atr_stop_distance = atr_value * 3.0 # Use a wider ATR multiplier
+    
+    # Method B: Bollinger Band based stop distance
+    bb_lower = data['BB_Lower'].iloc[-1]
+    bb_stop_distance = price - bb_lower if price > bb_lower else price * 0.15 # Use distance to lower band
+
+    # --- Step 2: Determine the base risk ---
+    # Use the larger of the two distances to be more conservative and give the trade more room.
+    # This places the stop below both the ATR level and the lower Bollinger Band.
+    base_stop_distance = max(atr_stop_distance, bb_stop_distance)
+    
+    # --- Step 3: Adjust stop based on confidence ---
+    # Higher confidence means we have stronger conviction, so we tolerate more volatility (wider stop).
+    # This is a key change from typical models.
+    # Confidence from 0.5 -> 1.0; Multiplier from 1.0 -> 1.5
+    confidence_multiplier = 1.0 + (confidence - 0.5)
+    
+    adjusted_stop_distance = base_stop_distance * confidence_multiplier
+
+    # --- Step 4: Enforce a maximum risk cap ---
+    # Safety brake: Never risk more than 15% of the entry price on a single trade.
+    max_risk_pct = 0.15 
+    max_risk_distance = price * max_risk_pct
+    
+    final_stop_distance = min(adjusted_stop_distance, max_risk_distance)
+
+    # --- Step 5: Final SL and TP calculation with a minimum R:R ---
+    stop_loss = price - final_stop_distance
+    
+    min_risk_reward_ratio = 2.0
+    required_profit_distance = final_stop_distance * min_risk_reward_ratio
+    take_profit = price + required_profit_distance
+    
+    return {'stop_loss': stop_loss, 'take_profit': take_profit, 'risk_reward_ratio': min_risk_reward_ratio}
 
 def generate_trading_signals(model, scaler, data, features, min_confidence=0.55):
+    """
+    Generates trading signals with correctly calculated, ticker-specific risk metrics.
+    This version uses a precise assignment method to prevent write errors.
+    """
     signals = data.copy()
     X = signals[features].fillna(signals[features].mean())
     X_scaled = scaler.transform(X)
@@ -248,12 +287,36 @@ def generate_trading_signals(model, scaler, data, features, min_confidence=0.55)
     signals['Signal'] = (signals['Confidence'] > min_confidence).astype(int)
     signals['Position_Size_Pct'] = signals['Confidence'].apply(lambda x: calculate_position_size(x, min_confidence=min_confidence))
     
+    # Initialize columns to avoid errors later
+    signals['Stop_Loss'] = np.nan
+    signals['Take_Profit'] = np.nan
+    signals['Risk_Reward'] = np.nan
+
+    # --- DEFINITIVE FIX FOR CALCULATION AND ASSIGNMENT ---
     for i in range(len(signals)):
         if signals['Signal'].iloc[i] == 1:
-            risk_metrics = calculate_risk_metrics(signals.iloc[:i+1], signals['Close'].iloc[i], signals['Confidence'].iloc[i])
-            signals.loc[signals.index[i], 'Stop_Loss'] = risk_metrics['stop_loss']
-            signals.loc[signals.index[i], 'Take_Profit'] = risk_metrics['take_profit']
-            signals.loc[signals.index[i], 'Risk_Reward'] = risk_metrics['risk_reward_ratio']
+            # 1. Get data for the current row
+            current_ticker = signals['Ticker'].iloc[i]
+            current_date = signals.index[i]
+            
+            # 2. Correctly filter for this ticker's history ONLY
+            ticker_history = signals[(signals['Ticker'] == current_ticker) & (signals.index <= current_date)]
+            
+            if not ticker_history.empty:
+                # 3. Calculate risk metrics using the clean history
+                risk_metrics = calculate_risk_metrics(
+                    ticker_history, 
+                    signals['Close'].iloc[i], 
+                    signals['Confidence'].iloc[i]
+                )
+                
+                # 4. **THE NEW, ROBUST ASSIGNMENT FIX**
+                # Use .iloc[row_position, column_position] for precise, unambiguous assignment.
+                # This is the safest way to set a value in a DataFrame while iterating.
+                signals.iloc[i, signals.columns.get_loc('Stop_Loss')] = risk_metrics['stop_loss']
+                signals.iloc[i, signals.columns.get_loc('Take_Profit')] = risk_metrics['take_profit']
+                signals.iloc[i, signals.columns.get_loc('Risk_Reward')] = risk_metrics['risk_reward_ratio']
+
     return signals
 
 def visualize_signals(signals, ticker):
@@ -365,40 +428,45 @@ if __name__ == "__main__":
     ]
     
     # --- Configuration ---
-    # Set this to True to re-download all data, ignoring the cache.
-    # Set to False to use cached data if available.
-    FORCE_API_DOWNLOAD = False 
+    FORCE_API_DOWNLOAD = False # IMPORTANT: Keep this False!
     
+    # --- Define Date Ranges ---
+    TRAIN_START = '2022-01-01'
+    TRAIN_END = '2024-12-31'
+    TEST_START = '2025-01-01'
+    # Use the current date for the test end date for consistency
+    TEST_END = datetime.now().strftime('%Y-%m-%d')
+
+
     try:
         model, scaler, signals, performance = main(
             crypto_tickers, 
-            train_start_date='2022-01-01',
-            train_end_date='2024-12-31',
-            test_start_date='2025-01-01',
-            test_end_date=None,
+            train_start_date=TRAIN_START,
+            train_end_date=TRAIN_END,
+            test_start_date=TEST_START,
+            test_end_date=TEST_END,
             forward_period=3,
-            min_confidence=0.55,
-            force_download=FORCE_API_DOWNLOAD # Pass the flag here
+            min_confidence=0.65,
+            force_download=FORCE_API_DOWNLOAD
         )
         
+        # --- NEW CODE TO SAVE SIGNALS ---
         if signals is not None and not signals.empty:
-            print("\n--- Latest Trading Signals ---")
-            latest_date = signals.index.max()
-            latest_signals = signals[signals.index == latest_date]
+            print("\n--- Saving Final Signals ---")
+            SIGNALS_CACHE_DIR = 'signals_cache'
+            if not os.path.exists(SIGNALS_CACHE_DIR):
+                os.makedirs(SIGNALS_CACHE_DIR)
             
-            if not latest_signals.empty:
-                for _, row in latest_signals.iterrows():
-                    if row['Signal'] == 1:
-                        print(f"📈 BUY {row['Ticker']} with {row['Position_Size_Pct']:.2f}% of portfolio")
-                        print(f"   - Confidence: {row['Confidence']:.2%}")
-                        print(f"   - Entry Price: ${row['Close']:.2f}")
-                        print(f"   - Stop Loss: ${row['Stop_Loss']:.2f} ({((row['Stop_Loss']/row['Close'])-1)*100:.2f}%)")
-                        print(f"   - Take Profit: ${row['Take_Profit']:.2f} ({((row['Take_Profit']/row['Close'])-1)*100:.2f}%)")
-                        print(f"   - Risk/Reward: {row['Risk_Reward']:.2f}:1\n")
-            else:
-                print("No active signals on the latest date.")
+            # Create a consistent filename for the signals
+            signals_filename = os.path.join(SIGNALS_CACHE_DIR, f"signals_{TEST_START}_to_{TEST_END}.pkl")
+            
+            if os.path.exists(signals_filename):
+                print(f"Signals file already exists: {signals_filename}")
+                os.remove(signals_filename)
+
+            print(f"Saving signals to: {signals_filename}")
+            signals.to_pickle(signals_filename)
+            print("Signals saved successfully.")
 
     except Exception as e:
         print(f"\nAn error occurred: {e}")
-        # A common error is an invalid date in the main call. Check your dates.
-        # For instance, the original code had '2024-011-01', which is invalid. Corrected to '2022-01-01'.
