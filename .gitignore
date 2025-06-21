@@ -32,10 +32,10 @@ ENV/
 *.swo
 
 # Project specific
-simple_model.py/cache/
-simple_model.py/models/
-simple_model.py/data/
-*.pkl
+#simple_model.py/cache/
+#simple_model.py/models/
+#simple_model.py/data/
+#*.pkl
 .env
 
 # Logs
