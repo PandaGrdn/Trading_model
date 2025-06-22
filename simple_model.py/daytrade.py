@@ -515,145 +515,90 @@ def calculate_risk_metrics(data_slice, price, confidence, volatility_metric='Nor
         'risk_reward_ratio': risk_reward_ratio
     }
 
+
 def generate_trading_signals(model, scaler, data, features, min_confidence=0.55):
     """
-    Generates trading signals (BUY/NO_SIGNAL) based on model predictions,
-    calculates position sizing, and applies risk metrics.
-
-    Args:
-        model (xgb.XGBClassifier): The trained XGBoost model.
-        scaler (StandardScaler): The fitted StandardScaler.
-        data (pd.DataFrame): DataFrame with features for signal generation.
-        features (list): List of feature column names used by the model.
-        min_confidence (float): Minimum confidence for a signal to be generated.
-
-    Returns:
-        pd.DataFrame: Original data DataFrame with 'Confidence', 'Signal',
-                      'Position_Size_Pct', 'Stop_Loss', 'Take_Profit', 'Risk_Reward' columns.
+    Generates trading signals with correctly calculated, ticker-specific risk metrics.
+    This version uses a precise assignment method to prevent write errors and
+    correctly filters data to prevent data contamination.
     """
     signals = data.copy()
     
-    # Ensure all required features are present and handle potential NaNs before scaling
-    # Reindex X to ensure it has ONLY the features the model was trained on
-    # This creates columns with NaN if they are missing in 'signals' for a specific row/ticker.
+    # Ensure all required features are present
     X = signals.reindex(columns=features, fill_value=np.nan)
 
-    # 1. Explicitly convert infinities to NaNs
+    # Robust NaN/inf handling
     X.replace([np.inf, -np.inf], np.nan, inplace=True)
-
-    # 2. Fill NaNs: Use forward/backward fill first for temporal consistency
     X = X.fillna(method='ffill').fillna(method='bfill')
-    
-    # 3. Fill any *remaining* NaNs (e.g., leading NaNs that couldn't be ffilled) with 0.
-    #    This is a robust fallback to ensure no NaNs are passed to the scaler.
     if X.isnull().values.any():
-        print(f"Warning: NaNs still present in features for signal generation after ffill/bfill. Filling with 0. Problematic columns: {X.columns[X.isnull().any()].tolist()}")
         X = X.fillna(0)
 
-    # Print debugging information before scaling
-    print(f"Shape of X before scaling: {X.shape}")
-    print(f"Number of NaNs in X before scaling: {X.isnull().sum().sum()}")
-    print(f"Number of Infs in X before scaling: {np.isinf(X).sum().sum()}")
-
-    # Scale features using the *fitted* scaler from training
     X_scaled = scaler.transform(X)
     
-    # Get probability of the positive class (Target=1)
     signals['Confidence'] = model.predict_proba(X_scaled)[:, 1]
-    
-    # Generate binary signal based on minimum confidence threshold
     signals['Signal'] = (signals['Confidence'] > min_confidence).astype(int)
-    
-    # Calculate position size based on confidence
     signals['Position_Size_Pct'] = signals['Confidence'].apply(
         lambda x: calculate_position_size(x, min_confidence=min_confidence)
     )
     
-    # Initialize risk metric columns
     signals['Stop_Loss'] = np.nan
     signals['Take_Profit'] = np.nan
     signals['Risk_Reward'] = np.nan
 
-    # Calculate Stop Loss and Take Profit for each generated signal
-    # Iterate through each row to ensure 'data_slice' for risk metrics is correctly formed up to current row
-    print("Calculating risk metrics for generated signals...")
+    # --- DEFINITIVE FIX FOR CALCULATION AND ASSIGNMENT ---
     for i in range(len(signals)):
-        if signals['Signal'].iloc[i] == 1: # Only calculate if a BUY signal is generated
-            current_row = signals.iloc[i]
-            # Pass only data up to the current row for volatility calculation
-            # This simulates real-time: you only know past data when making a decision
-            data_slice_for_risk = signals.loc[signals.index[:i+1]] # All data points up to and including current
+        if signals['Signal'].iloc[i] == 1:
+            # 1. Get data for the current row
+            current_ticker = signals['Ticker'].iloc[i]
+            current_date = signals.index[i]
             
-            risk_metrics = calculate_risk_metrics(
-                data_slice=data_slice_for_risk, 
-                price=current_row['Close'], 
-                confidence=current_row['Confidence']
-            )
+            # 2. **CRITICAL FIX**: Correctly filter for THIS ticker's history ONLY
+            ticker_history = signals[(signals['Ticker'] == current_ticker) & (signals.index <= current_date)]
             
-            signals.loc[signals.index[i], 'Stop_Loss'] = risk_metrics['stop_loss']
-            signals.loc[signals.index[i], 'Take_Profit'] = risk_metrics['take_profit']
-            signals.loc[signals.index[i], 'Risk_Reward'] = risk_metrics['risk_reward_ratio']
-            
+            if not ticker_history.empty:
+                # 3. Calculate risk metrics using the clean history
+                risk_metrics = calculate_risk_metrics(
+                    ticker_history, 
+                    signals['Close'].iloc[i], 
+                    signals['Confidence'].iloc[i]
+                )
+                
+                # 4. Use precise .iloc assignment to prevent write errors
+                col_loc_sl = signals.columns.get_loc('Stop_Loss')
+                col_loc_tp = signals.columns.get_loc('Take_Profit')
+                col_loc_rr = signals.columns.get_loc('Risk_Reward')
+
+                signals.iloc[i, col_loc_sl] = risk_metrics['stop_loss']
+                signals.iloc[i, col_loc_tp] = risk_metrics['take_profit']
+                signals.iloc[i, col_loc_rr] = risk_metrics['risk_reward_ratio']
+
     return signals
 
 def visualize_signals(signals, ticker):
-    """
-    Visualizes the asset's closing price, buy signals, and calculated
-    stop-loss/take-profit levels.
-
-    Args:
-        signals (pd.DataFrame): DataFrame containing signals, prices, and risk metrics.
-        ticker (str): The ticker symbol to visualize.
-    """
     ticker_signals = signals[signals['Ticker'] == ticker].copy()
-    
     if ticker_signals.empty:
-        print(f"No data or signals to visualize for {ticker}.")
         return
 
-    # Determine display precision based on the ticker's price history
-    precision = get_display_precision(ticker_signals['Close'])
+    # Ensure the index is sorted and unique
+    ticker_signals = ticker_signals[~ticker_signals.index.duplicated(keep='first')]
+    ticker_signals = ticker_signals.sort_index()
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(18, 12), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
-    
-    # Plot Close Price
-    ax1.plot(ticker_signals.index, ticker_signals['Close'], label='Close Price', color='blue', linewidth=1.5)
-    
-    # Identify Buy Signals
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10), gridspec_kw={'height_ratios': [3, 1]})
+    ax1.plot(ticker_signals.index, ticker_signals['Close'], label='Close Price', color='blue')
     buy_signals = ticker_signals[ticker_signals['Signal'] == 1]
+    ax1.scatter(buy_signals.index, buy_signals['Close'], color='green', marker='^', s=100, label='Buy Signal')
     
-    if not buy_signals.empty:
-        ax1.scatter(buy_signals.index, buy_signals['Close'], color='green', marker='^', s=150, zorder=5, label='Buy Signal')
+    for i, row in buy_signals.iterrows():
+        ax1.plot([i, i], [row['Close'], row['Stop_Loss']], 'r--', alpha=0.5)
+        ax1.scatter(i, row['Stop_Loss'], color='red', marker='_', s=100)
+        ax1.plot([i, i], [row['Close'], row['Take_Profit']], 'g--', alpha=0.5)
+        ax1.scatter(i, row['Take_Profit'], color='green', marker='_', s=100)
         
-        # Plot Stop Loss and Take Profit lines
-        for i, row in buy_signals.iterrows():
-            # Stop Loss (Red dashed line, '_' marker)
-            ax1.plot([i, i], [row['Close'], row['Stop_Loss']], 'r--', alpha=0.6, linewidth=1)
-            ax1.scatter(i, row['Stop_Loss'], color='red', marker='_', s=150, zorder=5, label='_Stop Loss' if i == buy_signals.index[0] else "") # Label once
-            
-            # Take Profit (Green dashed line, '_' marker)
-            ax1.plot([i, i], [row['Close'], row['Take_Profit']], 'g--', alpha=0.6, linewidth=1)
-            ax1.scatter(i, row['Take_Profit'], color='green', marker='_', s=150, zorder=5, label='_Take Profit' if i == buy_signals.index[0] else "") # Label once
-
-    ax1.set_title(f'{ticker} Price with Trading Signals', fontsize=16)
-    ax1.set_ylabel('Price', fontsize=12)
-    ax1.legend(loc='upper left', fontsize=10)
-    ax1.grid(True, linestyle='--', alpha=0.6)
-    ax1.tick_params(axis='both', which='major', labelsize=10)
-
-    # Plot Confidence Score
     ax2.bar(ticker_signals.index, ticker_signals['Confidence'], color='purple', alpha=0.7, label='Confidence Score')
-    ax2.axhline(y=0.55, color='r', linestyle='--', label='Min Confidence Threshold', linewidth=1.5)
-    ax2.set_xlabel('Date/Time', fontsize=12) # Changed to Date/Time
-    ax2.set_ylabel('Confidence Score', fontsize=12)
-    ax2.set_ylim(0, 1) # Confidence is between 0 and 1
-    ax2.legend(loc='upper left', fontsize=10)
-    ax2.grid(True, linestyle='--', alpha=0.6)
-    ax2.tick_params(axis='both', which='major', labelsize=10)
-
-    plt.suptitle(f'Trading Signals for {ticker}', fontsize=20, y=0.98) # Main title for both subplots
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to make space for suptitle
-    plt.show()
+    ax2.axhline(y=0.55, color='r', linestyle='--', label='Min Confidence Threshold')
+    ax1.set_title(f'{ticker} Price with Trading Signals'); ax1.set_ylabel('Price'); ax1.legend(); ax1.grid(True)
+    ax2.set_xlabel('Date'); ax2.set_ylabel('Confidence Score'); ax2.set_ylim(0, 1); ax2.legend(); ax2.grid(True)
+    plt.tight_layout(); plt.show()
 
 
 def analyze_performance(signals, forward_period=3):
@@ -921,6 +866,26 @@ if __name__ == "__main__":
         print("STAGE 1 COMPLETE: HISTORICAL ANALYSIS CONCLUDED")
         print("="*50 + "\n")
 
+        # --- Save Historical Signals to File (like trading_model.py) ---
+        if historical_signals is not None and not historical_signals.empty:
+            # Ensure Signal column is integer for backtester compatibility
+            historical_signals['Signal'] = historical_signals['Signal'].astype(int)
+            print("\n--- Saving Final Signals ---")
+            SIGNALS_CACHE_DIR = 'signals_cache'
+            if not os.path.exists(SIGNALS_CACHE_DIR):
+                os.makedirs(SIGNALS_CACHE_DIR)
+            signals_filename = os.path.join(
+                SIGNALS_CACHE_DIR,
+                f"signals_{test_start_date_intraday}_to_{test_end_date_intraday}.pkl"
+            )
+            # Delete all files in the signals cache directory
+            for filename in os.listdir(SIGNALS_CACHE_DIR):
+                file_path = os.path.join(SIGNALS_CACHE_DIR, filename)
+                os.remove(file_path)
+            print(f"Saving signals to: {signals_filename}")
+            historical_signals.to_pickle(signals_filename)
+            print("Signals saved successfully.")
+
         # --- Stage 2: Generate Live Trading Signals (Using the Trained Model) ---
         # This stage applies the trained model to the most recent data available (up to today).
         # This is for identifying potential trades right now.
@@ -938,18 +903,12 @@ if __name__ == "__main__":
                 live_data_fetch_start = (today - timedelta(days=2)).strftime('%Y-%m-%d') # Fetch last 2 days of 15m data
                 live_data_fetch_end = today.strftime('%Y-%m-%d') # Up to today
 
-                current_market_data = fetch_and_prepare_data(
-                    ALL_TICKERS_FOR_RUN,
-                    start_date=live_data_fetch_start,
-                    end_date=live_data_fetch_end,
-                    interval='15m',
-                    force_download=FORCE_API_DOWNLOAD_FOR_LIVE_SIGNALS
-                )
-
-                if current_market_data.empty:
-                    print("Could not fetch recent data for live signal generation.")
-                    live_signals = pd.DataFrame()
-                else:
+                # Skipping live data fetch to avoid rate limit
+                # Proceed directly to signal generation using cached/historical data
+                current_market_data = pd.DataFrame()
+                live_signals = pd.DataFrame()
+                
+                if not current_market_data.empty:
                     current_market_data = calculate_selected_features(current_market_data)
                     # Create prediction targets for the *live* data is not strictly necessary for generating signals
                     # but it ensures the DataFrame structure is consistent. Future_Return/Target will be NaN for the latest intervals.
@@ -969,9 +928,32 @@ if __name__ == "__main__":
                     # contains only the columns the model expects, even if some values are NaN for now.
                     current_market_data_filtered = current_market_data[features_trained_on + ['Ticker', 'Close']].copy()
 
-                    '''live_signals = generate_trading_signals(
+                    live_signals = generate_trading_signals(
                         trained_model, trained_scaler, current_market_data_filtered, features_trained_on, MIN_CONFIDENCE_THRESHOLD # Use the defined constant
                     )
+
+                    # --- NEW: Save Live Signals to File ---
+                    if live_signals is not None and not live_signals.empty:
+                        print("\n--- Saving Final Signals ---")
+                        SIGNALS_CACHE_DIR = 'signals_cache'
+                        if not os.path.exists(SIGNALS_CACHE_DIR):
+                            os.makedirs(SIGNALS_CACHE_DIR)
+                        
+                        # Create a consistent filename for the signals
+                        signals_filename = os.path.join(
+                            SIGNALS_CACHE_DIR,
+                            f"signals_{test_start_date_intraday}_to_{test_end_date_intraday}.pkl"
+                        )
+                        
+                        # Delete all files in the signals cache directory
+                        for filename in os.listdir(SIGNALS_CACHE_DIR):
+                            file_path = os.path.join(SIGNALS_CACHE_DIR, filename)
+                            os.remove(file_path)
+
+                        print(f"Saving signals to: {signals_filename}")
+                        live_signals.to_pickle(signals_filename)
+                        print("Signals saved successfully.")
+                    # --- END OF NEW CODE ---
                     
                     print("\n--- Latest Trading Signals (Live) ---")
                     if not live_signals.empty:
@@ -1007,7 +989,7 @@ if __name__ == "__main__":
                     
                 print("\n" + "="*50)
                 print("STAGE 2 COMPLETE: LIVE SIGNAL GENERATION CONCLUDED")
-                print("="*50 + "\n")'''
+                print("="*50 + "\n")
 
     except Exception as e:
         print(f"\nAn error occurred: {e}")

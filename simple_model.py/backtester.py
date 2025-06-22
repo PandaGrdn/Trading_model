@@ -84,16 +84,20 @@ class CryptoBacktester:
     def _update_portfolio_and_check_exits(self, date, day_data):
         """
         Updates market value of holdings and processes exits (SL/TP).
-        
-        This logic prioritizes exits: a position can be closed on the same day it's opened
-        if the stop-loss is hit.
         """
+        # --- NEW ROBUSTNESS CHECK ---
+        # If only one row of data exists for this timestamp, day_data will be a Series.
+        # We must convert it to a DataFrame to ensure consistent processing.
+        if isinstance(day_data, pd.Series):
+            day_data = day_data.to_frame().T
+
         holdings_value = 0.0
         # Iterate over a copy of keys since we may modify the dictionary
         for ticker in list(self.holdings.keys()):
             position = self.holdings[ticker]
             
             # Get the current day's price data for the specific ticker
+            # This check will now work correctly because day_data is guaranteed to be a DataFrame
             if ticker in day_data['Ticker'].values:
                 ticker_day_data = day_data[day_data['Ticker'] == ticker].iloc[0]
                 current_low = ticker_day_data['Low']
@@ -110,11 +114,15 @@ class CryptoBacktester:
             exit_price = None
             exit_reason = None
             
-            if current_low <= position['stop_loss']:
-                exit_price = position['stop_loss']
+            # Use .loc to access stop_loss and take_profit to avoid potential warnings
+            stop_loss_level = position.get('stop_loss', np.nan)
+            take_profit_level = position.get('take_profit', np.nan)
+
+            if pd.notna(stop_loss_level) and current_low <= stop_loss_level:
+                exit_price = stop_loss_level
                 exit_reason = 'Stop-Loss Hit'
-            elif current_high >= position['take_profit']:
-                exit_price = position['take_profit']
+            elif pd.notna(take_profit_level) and current_high >= take_profit_level:
+                exit_price = take_profit_level
                 exit_reason = 'Take-Profit Hit'
                 
             if exit_price:
@@ -130,8 +138,15 @@ class CryptoBacktester:
         """
         Checks for and executes new buy signals for the current day.
         """
-        # Filter for rows with a buy signal
+        # --- NEW ROBUSTNESS CHECK ---
+        # If only one row of data exists for this timestamp, day_data will be a Series.
+        # We must convert it back to a DataFrame to ensure consistent processing.
+        if isinstance(day_data, pd.Series):
+            day_data = day_data.to_frame().T
+
+        # Filter for rows with a buy signal (this will now work correctly)
         signals_today = day_data[day_data['Signal'] == 1]
+        
         for _, signal_row in signals_today.iterrows():
             ticker = signal_row['Ticker']
             
@@ -310,7 +325,7 @@ class CryptoBacktester:
 if __name__ == "__main__":
     # --- Configuration ---
     SIGNALS_CACHE_DIR = 'signals_cache'
-    TEST_START_DATE = '2025-01-01'
+    TEST_START_DATE = '2025-06-12'
     # Use the current date to match the filename from the generator script
     TEST_END_DATE = datetime.now().strftime('%Y-%m-%d')
     INITIAL_CAPITAL = 100000.0
