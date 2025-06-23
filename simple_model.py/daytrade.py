@@ -145,33 +145,50 @@ def calculate_selected_features(data):
     print("Calculating technical indicators...")
     grouped = data.groupby('Ticker')
     result = pd.DataFrame()
-    
+
+    # --- Inter-asset features (calculated BEFORE grouping, then merged) ---
+    # Calculate average market return (simple average of all daily returns)
+    # This needs to be done on the full dataset before grouping by ticker
+    # Adjusting for interval data: Calculate mean daily return
+    # First, ensure index is datetime
+    data.index = pd.to_datetime(data.index)
+
+    # Calculate daily returns for each ticker and then average across tickers for each timestamp
+    # Use 'Daily_Return' (which is actually 'Interval_Return' in this context)
+    market_avg_return = data.groupby(data.index)['Daily_Return'].mean().rename('Market_Avg_Return')
+
+    # Merge market average return back into the original data, ensuring alignment by index
+    data = data.merge(market_avg_return, left_index=True, right_index=True, how='left')
+
+    # --- Time-based features (calculated BEFORE grouping) ---
+    data['Hour_Of_Day'] = data.index.hour
+
+    # Now, proceed with grouped calculations for ticker-specific features
     for ticker, group in grouped:
         df = group.copy()
-        
+
         # === Moving Averages Group ===
         df['SMA_5'] = talib.SMA(df['Close'], timeperiod=5)
         df['SMA_20'] = talib.SMA(df['Close'], timeperiod=20)
         df['SMA_50'] = talib.SMA(df['Close'], timeperiod=50) # May not have enough data for 50 periods in 20 days
         df['SMA_200'] = talib.SMA(df['Close'], timeperiod=200) # Definitely not enough for 200 periods in ~20 days of 15m data
+
         df['EMA_12'] = talib.EMA(df['Close'], timeperiod=12)
         df['EMA_26'] = talib.EMA(df['Close'], timeperiod=26)
-        
+
         # === Bollinger Bands Group ===
         df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = talib.BBANDS(df['Close'], timeperiod=20)
         df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / (df['BB_Middle'] + 1e-9) # Add epsilon
-        
+
         # === Ichimoku Group (1 representative) ===
-        # Note: Ichimoku calculations require a minimum of 26 periods for the base line
-        # and 52 for lagging span (not implemented here fully)
         df['Ichimoku_Conversion'] = (df['High'].rolling(window=9).max() + df['Low'].rolling(window=9).min()) / 2
         df['Ichimoku_Base'] = (df['High'].rolling(window=26).max() + df['Low'].rolling(window=26).min()) / 2
-        
+
         # === Volatility Group ===
         df['ATR'] = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
         df['Normalized_ATR'] = df['ATR'] / (df['Close'] + 1e-9) # Add epsilon
         df['Volatility_20'] = df['Log_Return'].rolling(window=20).std()
-        
+
         # === Momentum Group ===
         df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
         df['MACD'], df['MACD_Signal'], _ = talib.MACD(df['Close'])
@@ -181,40 +198,54 @@ def calculate_selected_features(data):
 
         # === Volume Indicator Group ===
         df['OBV'] = talib.OBV(df['Close'], df['Volume'])
-        # VWAP calculation should be cumulative over the entire period for proper interpretation
-        # For grouped data, this is complex if not done on the raw full dataset before grouping.
-        # As a simplified proxy, we'll calculate a rolling VWAP
         df['VWAP'] = ((df['Close'] * df['Volume']).rolling(window=20).sum()) / (df['Volume'].rolling(window=20).sum() + 1e-9)
         df['CMF'] = talib.ADOSC(df['High'], df['Low'], df['Close'], df['Volume'], fastperiod=3, slowperiod=10) # Chaikin Money Flow (ADOSC is Accumulation/Distribution Oscillator)
-        
+
         # === Price Pattern Group ===
         df['Parabolic_SAR'] = talib.SAR(df['High'], df['Low'])
         df['High_Low_Range'] = df['High'] - df['Low']
         df['HL_Range_Ratio'] = df['High_Low_Range'] / (df['Close'] + 1e-9) # Add epsilon
-        
+
         # === Synthetic Features Group ===
-        # Buying/Selling pressure based on intra-day range and volume
         df['Buying_Pressure'] = ((df['Close'] - df['Low']) / (df['High'] - df['Low'] + 1e-9)).fillna(0) * df['Volume']
         df['Selling_Pressure'] = ((df['High'] - df['Close']) / (df['High'] - df['Low'] + 1e-9)).fillna(0) * df['Volume']
-        
-        # Proximity to Bollinger Bands (as indicators of relative position within channel)
         df['Support_Proximity'] = (df['Close'] - df['BB_Lower']) / (df['Close'] + 1e-9)
         df['Resistance_Proximity'] = (df['BB_Upper'] - df['Close']) / (df['Close'] + 1e-9)
-        
+
+        # --- NEW: Lagged Features (Adjust periods as needed for your interval) ---
+        # Lagged returns
+        df['Log_Return_Lag1'] = df['Log_Return'].shift(1)
+        df['Daily_Return_Lag1'] = df['Daily_Return'].shift(1)
+        df['Daily_Return_Lag2'] = df['Daily_Return'].shift(2)
+
+        # Lagged RSI
+        df['RSI_Lag1'] = df['RSI'].shift(1)
+        df['RSI_Lag2'] = df['RSI'].shift(2)
+
+        # Lagged MACD
+        df['MACD_Lag1'] = df['MACD'].shift(1)
+        df['MACD_Signal_Lag1'] = df['MACD_Signal'].shift(1)
+
+        # Lagged Volume Change
+        df['Volume_Change_Lag1'] = df['Volume_Change'].shift(1)
+
         # --- NEW: Replace infinities with NaN right after calculation for each group ---
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
         result = pd.concat([result, df], axis=0)
-    
+
+    # Re-merge the market average return and time features into the final result dataframe
+    # This ensures they are present for all rows after the grouped operations
+    result = result.merge(market_avg_return, left_index=True, right_index=True, how='left')
+    result['Hour_Of_Day'] = result.index.hour
+
     # Fill any remaining NaNs created by TA-Lib (e.g., initial periods of MAs)
-    # This is a general fill, specific strategies for NaNs might be better
-    # For now, fill with 0 or a sensible default, as some NaNs will be dropped later.
     result = result.fillna(method='ffill').fillna(method='bfill') # Forward fill, then backward fill for leading NaNs
     result = result.fillna(0) # Catch any remaining NaNs (e.g., if series was all NaNs)
 
     return result
 
-def create_prediction_targets(data, forward_period=3):
+def create_prediction_targets(data, forward_period):
     """
     Create prediction targets based on future price movements.
     
@@ -232,7 +263,7 @@ def create_prediction_targets(data, forward_period=3):
     
     # Define the binary target: 1 if future return is >= 0.005 (0.5%), 0 otherwise
     # Adjust target threshold for intraday smaller movements if needed.
-    data['Target'] = (data['Future_Return'] >= 0.005).astype(int) # Example: 0.5% gain
+    data['Target'] = (data['Future_Return'] >= 0.01).astype(int) # Example: 2% gain
     
     # Calculate the absolute magnitude of the future return (for analysis, not directly used as target)
     data['Return_Magnitude'] = data['Future_Return'].abs()
@@ -264,24 +295,30 @@ def select_features_for_model(data):
         'RSI', 'MACD', 'MACD_Signal', 'MOM', 'Stoch_K', 'Stoch_D', 'ADX',
         'OBV', 'VWAP', 'CMF',
         'Parabolic_SAR', 'High_Low_Range', 'HL_Range_Ratio',
-        'Buying_Pressure', 'Selling_Pressure', 'Support_Proximity', 'Resistance_Proximity'
+        'Buying_Pressure', 'Selling_Pressure', 'Support_Proximity', 'Resistance_Proximity',
+
+        # --- NEW: Added Features ---
+        'Market_Avg_Return', # Inter-asset feature
+        'Hour_Of_Day',       # Time-based
+        'Log_Return_Lag1',   # Lagged feature
+        'Daily_Return_Lag1', # Lagged feature
+        'Daily_Return_Lag2', # Lagged feature
+        'RSI_Lag1',          # Lagged feature
+        'RSI_Lag2',          # Lagged feature
+        'MACD_Lag1',         # Lagged feature
+        'MACD_Signal_Lag1',  # Lagged feature
+        'Volume_Change_Lag1' # Lagged feature
     ]
-    
+
     # Filter out features that are unlikely to have enough data for short intraday periods
-    # e.g., SMA_50, SMA_200 periods need at least that many intervals
-    # 20 days * 26 intervals/day = 520 intervals. So SMA_50, SMA_200 might be calculable but will have many NaNs
-    # For very short training periods, it's better to stick to shorter-period indicators
-    filtered_base_features = [f for f in base_selected_features if f in data.columns and f not in ['SMA_200']] 
-    # Remove SMA_50 if training data is too short, but for 20 days (~520 intervals), 50 is fine.
-    
+    filtered_base_features = [f for f in base_selected_features if f in data.columns and f not in ['SMA_200']]
+
     # Ensure all base features exist in the data before trying to create ratios
     available_features = [f for f in filtered_base_features if f in data.columns]
-    
+
     # Create additional ratio-based features to capture relationships
     data['SMA5_Ratio'] = data['Close'] / (data['SMA_5'] + 1e-9)
     data['SMA20_Ratio'] = data['Close'] / (data['SMA_20'] + 1e-9)
-    # data['SMA50_Ratio'] = data['Close'] / (data['SMA_50'] + 1e-9) # Keep if SMA_50 is included
-    # data['SMA200_Ratio'] = data['Close'] / (data['SMA_200'] + 1e-9) # Remove if SMA_200 is removed
     data['EMA12_Ratio'] = data['Close'] / (data['EMA_12'] + 1e-9)
     data['BB_Position'] = (data['Close'] - data['BB_Lower']) / (data['BB_Upper'] - data['BB_Lower'] + 1e-9)
     data['MACD_Diff'] = data['MACD'] - data['MACD_Signal']
@@ -292,11 +329,11 @@ def select_features_for_model(data):
 
     # Combine all selected features
     all_selected_features = available_features + [
-        'SMA5_Ratio', 'SMA20_Ratio', # 'SMA50_Ratio', 'SMA200_Ratio',
-        'EMA12_Ratio', 'BB_Position', 'MACD_Diff', 
+        'SMA5_Ratio', 'SMA20_Ratio',
+        'EMA12_Ratio', 'BB_Position', 'MACD_Diff',
         'EMA_Cross_Signal', 'RSI_Overbought_Sell', 'RSI_Oversold_Buy'
     ]
-    
+
     # Filter out any features that might not have been created due to missing data or calculation issues
     final_features = [f for f in all_selected_features if f in data.columns]
 
@@ -601,7 +638,7 @@ def visualize_signals(signals, ticker):
     plt.tight_layout(); plt.show()
 
 
-def analyze_performance(signals, forward_period=3):
+def analyze_performance(signals, forward_period):
     """
     Analyzes the backtested performance of the trading signals.
 
@@ -796,10 +833,10 @@ def main(all_tickers, train_start_date, train_end_date, test_start_date,
 if __name__ == "__main__":
     # Define your cryptocurrencies and some volatile stocks for comprehensive testing
     all_crypto_tickers = [
-        'BTC-USD', 'ETH-USD', 'SOL-USD', # Reduced crypto tickers
+         # Reduced crypto tickers
     ]
     all_stock_tickers = [
-        'TSLA', 'NVDA', 'AMC' # Reduced stock tickers
+        'TSLA', 'NVDA', 'AMD', 'GOOGL', 'AAPL', 'AMZN', 'PFE', 'CSCO' # Reduced stock tickers
     ]
     
     # Combine all tickers for the overall test run
@@ -822,6 +859,8 @@ if __name__ == "__main__":
     # Set to None if you want to train on and test on all tickers provided
     UNSEEN_TICKER_FOR_TEST = 'PLUG' # Example: Test PLUG as an unseen stock.
 
+    FORWARD = 4
+
     # NOTE: 'PLUG' is currently not in ALL_TICKERS_FOR_RUN. If you intend to test 'PLUG'
     # as an unseen ticker, please ensure it's added to ALL_TICKERS_FOR_RUN.
     # Otherwise, set UNSEEN_TICKER_FOR_TEST to None or to one of the tickers in the list.
@@ -831,7 +870,7 @@ if __name__ == "__main__":
 
     try:
         # Calculate dates for 15-minute intervals
-        today = datetime.now()
+        today = datetime.now()-timedelta(days=3)
         
         # Test data: Last 10 days
         test_end_date_intraday = today.strftime('%Y-%m-%d')
@@ -855,7 +894,7 @@ if __name__ == "__main__":
             train_end_date=train_end_date_intraday, 
             test_start_date=test_start_date_intraday,
             test_end_date=test_end_date_intraday,
-            forward_period=3, # Predicting 3 15-minute intervals (45 minutes) into the future
+            forward_period=FORWARD, # Predicting 3 15-minute intervals (45 minutes) into the future
             min_confidence=MIN_CONFIDENCE_THRESHOLD, # Use the defined constant
             force_download=FORCE_API_DOWNLOAD_FOR_BACKTEST,
             unseen_test_ticker=UNSEEN_TICKER_FOR_TEST,
@@ -912,7 +951,7 @@ if __name__ == "__main__":
                     current_market_data = calculate_selected_features(current_market_data)
                     # Create prediction targets for the *live* data is not strictly necessary for generating signals
                     # but it ensures the DataFrame structure is consistent. Future_Return/Target will be NaN for the latest intervals.
-                    current_market_data = create_prediction_targets(current_market_data, forward_period=3) 
+                    current_market_data = create_prediction_targets(current_market_data, forward_period=FORWARD) 
                     current_market_data, live_features = select_features_for_model(current_market_data)
 
                     # Ensure only relevant features are passed and handle any missing columns if live_features differs from features_trained_on

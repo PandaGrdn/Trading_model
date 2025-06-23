@@ -325,9 +325,9 @@ class CryptoBacktester:
 if __name__ == "__main__":
     # --- Configuration ---
     SIGNALS_CACHE_DIR = 'signals_cache'
-    TEST_START_DATE = '2025-06-12'
+    TEST_START_DATE = '2025-06-10'
     # Use the current date to match the filename from the generator script
-    TEST_END_DATE = datetime.now().strftime('%Y-%m-%d')
+    TEST_END_DATE = '2025-06-20'
     INITIAL_CAPITAL = 100000.0
     FEE_RATE = 0.001 # Example: 0.1% fee
 
@@ -356,5 +356,5 @@ if __name__ == "__main__":
             
             if not backtester.trades_df.empty and 'PnL' in backtester.trades_df.columns:
                 print("\n--- Final Trade Log ---")
-                completed_trades = backtester.trades_df.dropna(subset=['PnL'])
+                completed_trades = backtester.trades_df
                 print(completed_trades[['Ticker', 'EntryDate', 'ExitDate', 'PnL', 'EntryPrice', 'ExitPrice', 'Reason']].round(2))
