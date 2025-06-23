@@ -325,11 +325,13 @@ class CryptoBacktester:
 if __name__ == "__main__":
     # --- Configuration ---
     SIGNALS_CACHE_DIR = 'signals_cache'
-    TEST_START_DATE = '2025-06-12'
+    TEST_START_DATE = '2025-01-01'
     # Use the current date to match the filename from the generator script
-    TEST_END_DATE = datetime.now().strftime('%Y-%m-%d')
+    #TEST_END_DATE = datetime.now().strftime('%Y-%m-%d')
+    TEST_END_DATE = '2025-05-18'
     INITIAL_CAPITAL = 100000.0
     FEE_RATE = 0.001 # Example: 0.1% fee
+    TRADE_LOG_CACHE_DIR = 'trade_logs'
 
     # --- Load Pre-Computed Signals ---
     signals_filename = os.path.join(SIGNALS_CACHE_DIR, f"signals_{TEST_START_DATE}_to_{TEST_END_DATE}.pkl")
@@ -358,3 +360,20 @@ if __name__ == "__main__":
                 print("\n--- Final Trade Log ---")
                 completed_trades = backtester.trades_df.dropna(subset=['PnL'])
                 print(completed_trades[['Ticker', 'EntryDate', 'ExitDate', 'PnL', 'EntryPrice', 'ExitPrice', 'Reason']].round(2))
+
+                if not os.path.exists(TRADE_LOG_CACHE_DIR):
+                    os.makedirs(TRADE_LOG_CACHE_DIR)
+                
+                # Create a proper filename for the trade log
+                trade_log_filename = os.path.join(TRADE_LOG_CACHE_DIR, f"trade_log_{TEST_START_DATE}_to_{TEST_END_DATE}.csv")
+                
+                for filename in os.listdir(TRADE_LOG_CACHE_DIR):
+                    file_path = os.path.join(TRADE_LOG_CACHE_DIR, filename)
+                    if os.path.isfile(file_path):
+                        print(f"Removing file: {file_path}")
+                        os.remove(file_path)
+
+                print(f"Saving trade log to: {trade_log_filename}")
+                completed_trades.to_csv(trade_log_filename, index=False)
+                print("Trade log saved successfully.")
+

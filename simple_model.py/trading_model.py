@@ -434,8 +434,9 @@ if __name__ == "__main__":
     TRAIN_START = '2022-01-01'
     TRAIN_END = '2024-12-31'
     TEST_START = '2025-01-01'
+    TEST_END = '2025-05-18'
     # Use the current date for the test end date for consistency
-    TEST_END = datetime.now().strftime('%Y-%m-%d')
+    #TEST_END = datetime.now().strftime('%Y-%m-%d')
 
 
     try:
@@ -445,8 +446,8 @@ if __name__ == "__main__":
             train_end_date=TRAIN_END,
             test_start_date=TEST_START,
             test_end_date=TEST_END,
-            forward_period=3,
-            min_confidence=0.65,
+            forward_period=5,
+            min_confidence=0.55,
             force_download=FORCE_API_DOWNLOAD
         )
         
@@ -460,9 +461,11 @@ if __name__ == "__main__":
             # Create a consistent filename for the signals
             signals_filename = os.path.join(SIGNALS_CACHE_DIR, f"signals_{TEST_START}_to_{TEST_END}.pkl")
             
-            if os.path.exists(signals_filename):
-                print(f"Signals file already exists: {signals_filename}")
-                os.remove(signals_filename)
+            for filename in os.listdir(SIGNALS_CACHE_DIR):
+                file_path = os.path.join(SIGNALS_CACHE_DIR, filename)
+                if os.path.isfile(file_path):
+                    print(f"Removing file: {file_path}")
+                    os.remove(file_path)
 
             print(f"Saving signals to: {signals_filename}")
             signals.to_pickle(signals_filename)
