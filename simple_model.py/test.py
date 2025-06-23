@@ -312,7 +312,7 @@ all_stock_tickers = [
 ALL_TICKERS_FOR_RUN = all_crypto_tickers + all_stock_tickers
 
 today = datetime.now()
-live_data_fetch_start = (today - timedelta(days=2)).strftime('%Y-%m-%d') # Fetch last 2 days of 15m data
+live_data_fetch_start = (today - timedelta(days=10)).strftime('%Y-%m-%d') # Fetch last 2 days of 15m data
 live_data_fetch_end = today.strftime('%Y-%m-%d') # Up to today
 current_market_data = fetch_and_prepare_data(
                     ALL_TICKERS_FOR_RUN,
@@ -325,5 +325,7 @@ current_market_data = fetch_and_prepare_data(
 current_market_data = calculate_selected_features(current_market_data)
 # Create prediction targets for the *live* data is not strictly necessary for generating signals
 # but it ensures the DataFrame structure is consistent. Future_Return/Target will be NaN for the latest intervals.
+print(current_market_data.head())
 current_market_data = create_prediction_targets(current_market_data, forward_period=3) 
+
 

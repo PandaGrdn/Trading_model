@@ -245,27 +245,66 @@ def calculate_selected_features(data):
 
     return result
 
-def create_prediction_targets(data, forward_period):
+def create_prediction_targets(data, forward_period, profit_threshold=0.01, stop_loss_threshold=0.02):
     """
-    Create prediction targets based on future price movements.
-    
+    Create prediction targets based on the 'first touch' of a profit or stop-loss threshold
+    within a specified forward period.
+
     Args:
         data (pd.DataFrame): DataFrame with 'Close' and 'Ticker' columns.
-        forward_period (int): Number of intervals into the future to calculate return for target.
+        forward_period (int): Number of intervals into the future to look for a touch.
+        profit_threshold (float): The percentage gain at which to consider a 'profit touch'.
+                                  E.g., 0.01 for 1% gain.
+        stop_loss_threshold (float): The percentage loss at which to consider a 'stop loss touch'.
+                                     E.g., 0.005 for 0.5% loss.
 
     Returns:
-        pd.DataFrame: Original DataFrame with 'Future_Return', 'Target', and 'Return_Magnitude' columns.
+        pd.DataFrame: Original DataFrame with 'Target' (1 for profit, 0 for stop loss),
+                      'Future_Return' (the actual return at the time of touch or end of period),
+                      and 'Return_Magnitude' columns.
     """
-    print(f"Creating prediction targets for {forward_period} intervals into the future...")
-    # Calculate future percentage change in 'Close' price for each Ticker independently
-    # .shift(-forward_period) aligns the future return to the current row's date
-    data['Future_Return'] = data.groupby('Ticker')['Close'].pct_change(forward_period).shift(-forward_period)
-    
-    # Define the binary target: 1 if future return is >= 0.005 (0.5%), 0 otherwise
-    # Adjust target threshold for intraday smaller movements if needed.
-    data['Target'] = (data['Future_Return'] >= 0.01).astype(int) # Example: 2% gain
-    
-    # Calculate the absolute magnitude of the future return (for analysis, not directly used as target)
+    print(f"Creating prediction targets based on first touch within {forward_period} intervals...")
+    data['Target'] = np.nan
+    data['Future_Return'] = np.nan
+    data['Return_Magnitude'] = np.nan
+
+    grouped = data.groupby('Ticker')
+
+    for ticker, group in grouped:
+        for i in range(len(group) - forward_period):
+            current_close = group['Close'].iloc[i]
+            
+            # Slice the future data for the current row's forward period
+            future_prices = group['Close'].iloc[i+1 : i+1+forward_period]
+            
+            if future_prices.empty:
+                continue
+
+            # Calculate the upper and lower bounds for profit/stop loss
+            profit_price = current_close * (1 + profit_threshold)
+            stop_loss_price = current_close * (1 - stop_loss_threshold)
+
+            target_set = False
+            for j, future_price in enumerate(future_prices):
+                # Check for profit touch
+                if future_price >= profit_price:
+                    data.loc[group.index[i], 'Target'] = 1
+                    data.loc[group.index[i], 'Future_Return'] = (future_price - current_close) / current_close
+                    target_set = True
+                    break # Target hit, move to next initial row
+
+                # Check for stop loss touch
+                if future_price <= stop_loss_price:
+                    data.loc[group.index[i], 'Target'] = 0
+                    data.loc[group.index[i], 'Future_Return'] = (future_price - current_close) / current_close
+                    target_set = True
+                    break # Target hit, move to next initial row
+            
+            
+            # If neither threshold is hit within the forward period, target remains NaN.
+            # This implicitly removes these instances from training when NaNs are dropped.
+            
+    # Calculate the absolute magnitude of the future return for analysis
     data['Return_Magnitude'] = data['Future_Return'].abs()
     
     return data
