@@ -245,7 +245,7 @@ def calculate_selected_features(data):
 
     return result
 
-def create_prediction_targets(data, forward_period, profit_threshold=0.01, stop_loss_threshold=0.02):
+def create_prediction_targets(data, forward_period, profit_threshold=0.005, stop_loss_threshold=0.005):
     """
     Create prediction targets based on the 'first touch' of a profit or stop-loss threshold
     within a specified forward period.
@@ -299,6 +299,9 @@ def create_prediction_targets(data, forward_period, profit_threshold=0.01, stop_
                     data.loc[group.index[i], 'Future_Return'] = (future_price - current_close) / current_close
                     target_set = True
                     break # Target hit, move to next initial row
+            if not target_set:
+                data.loc[group.index[i], 'Target'] = 0
+                data['Future_Return'] = data.groupby('Ticker')['Close'].pct_change(forward_period).shift(-forward_period)
             
             
             # If neither threshold is hit within the forward period, target remains NaN.
