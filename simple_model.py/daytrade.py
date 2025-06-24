@@ -268,78 +268,170 @@ def calculate_selected_features(data):
 
     return result
 
-def select_features_for_model(data):
+def calculate_selected_features(df):
     """
-    Selects a predefined set of features for the model and creates additional
-    ratio-based features to capture relationships between indicators and price.
+    Calculates a comprehensive set of technical indicators and features
+    for a given DataFrame.
 
     Args:
-        data (pd.DataFrame): DataFrame containing raw data and calculated technical indicators.
+        df (pd.DataFrame): DataFrame with 'Open', 'High', 'Low', 'Close', 'Volume' columns.
 
     Returns:
-        tuple:
-            - pd.DataFrame: The input DataFrame with new ratio features added.
-            - list: A list of all selected feature column names for model training.
+        pd.DataFrame: DataFrame with calculated features.
     """
-    # Base selected features (these are the TA indicators calculated previously)
-    base_selected_features = [
-        'Open', 'High', 'Low', 'Close', 'Volume', 
-        'Log_Return', 'Daily_Return', 'Volume_Change', 'Price_Volume_Ratio',
-        'SMA_5', 'SMA_20', 'SMA_50', 
-        'EMA_12', 'EMA_26', 'EMA_50', # Added EMA_50
-        'BB_Upper', 'BB_Middle', 'BB_Lower', 'BB_Width', 'BB_PercentB', # Added BB_PercentB
-        'Ichimoku_Conversion', 'Ichimoku_Base', 'Ichimoku_Leading_Span_A', 
-        'Ichimoku_Leading_Span_B', 'Ichimoku_Lagging_Span', # Added Ichimoku components
-        'ATR', 'Normalized_ATR', 'Volatility_20', 'Volatility_Daily', # Added Volatility_Daily
-        'RSI', 'MACD', 'MACD_Signal', 'MOM', 'Stoch_K', 'Stoch_D', 'ADX',
-        'Williams_R', 'CCI', # Added Williams %R and CCI
-        'OBV', 'VWAP', 'CMF', 'Money_Flow_Index', # Added Money_Flow_Index
-        'Parabolic_SAR', 'High_Low_Range', 'HL_Range_Ratio',
-        'Open_Close_Range', 'OC_Range_Ratio', # Added Open/Close range features
-        'Buying_Pressure', 'Selling_Pressure', 'Support_Proximity', 'Resistance_Proximity',
-        'Price_vs_SMA50', # Added Price vs SMA50
+    # Ensure columns are numeric
+    for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Lagged features
-        'Market_Avg_Return', 
-        'Hour_Of_Day', 'Day_Of_Week', 'Day_Of_Month', 'Month_Of_Year', # Added more time features
-        'Log_Return_Lag1', 
-        'Daily_Return_Lag1', 'Daily_Return_Lag2', 'Daily_Return_Lag3', # Added Daily_Return_Lag3
-        'RSI_Lag1', 'RSI_Lag2', 'RSI_Lag3', # Added RSI_Lag3
-        'MACD_Lag1', 'MACD_Signal_Lag1', 'MACD_Hist_Lag1', # Added MACD_Hist_Lag1
-        'Volume_Change_Lag1', 'Volume_Change_Lag2' # Added Volume_Change_Lag2
-    ]
+    # Basic Price and Volume Features
+    df['Log_Return'] = np.log(df['Close'] / df['Close'].shift(1))
+    df['Daily_Return'] = df['Close'].pct_change()
+    df['Volume_Change'] = df['Volume'].pct_change()
+    df['Price_Volume_Ratio'] = df['Close'] * df['Volume']
 
-    # Filter out features that are unlikely to have enough data for short intraday periods
-    # Note: SMA_200 might still be too long for very short intraday intervals (e.g., 15m over 20 days)
-    filtered_base_features = [f for f in base_selected_features if f in data.columns]
+    # Moving Averages (short to medium term for day trading)
+    df['SMA_5'] = talib.SMA(df['Close'], timeperiod=5)
+    df['SMA_20'] = talib.SMA(df['Close'], timeperiod=20)
+    df['SMA_50'] = talib.SMA(df['Close'], timeperiod=50) # Still well within 30 days of 15-min data
+    df['EMA_12'] = talib.EMA(df['Close'], timeperiod=12)
+    df['EMA_26'] = talib.EMA(df['Close'], timeperiod=26)
+    df['EMA_50'] = talib.EMA(df['Close'], timeperiod=50)
 
-    # Ensure all base features exist in the data before trying to create ratios
-    available_features = [f for f in filtered_base_features if f in data.columns]
+    # Bollinger Bands
+    df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = talib.BBANDS(df['Close'], timeperiod=20)
+    df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle']
+    df['BB_PercentB'] = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'])
 
-    # Create additional ratio-based features to capture relationships
-    data['SMA5_Ratio'] = data['Close'] / (data['SMA_5'] + 1e-9)
-    data['EMA12_Ratio'] = data['Close'] / (data['EMA_12'] + 1e-9)
-    data['BB_Position'] = (data['Close'] - data['BB_Lower']) / (data['BB_Upper'] - data['BB_Lower'] + 1e-9)
-    data['MACD_Diff'] = data['MACD'] - data['MACD_Signal']
-    data['EMA_Cross_Signal'] = (data['EMA_12'] > data['EMA_26']).astype(int)
-    data['RSI_Overbought_Sell'] = (data['RSI'] > 70).astype(int)
-    data['RSI_Oversold_Buy'] = (data['RSI'] < 30).astype(int)
-    data['ADX_Strong_Trend'] = (data['ADX'] > 25).astype(int) # New: ADX for strong trend indication
-    data['Volume_Price_Correlation_5'] = data['Close'].rolling(window=5).corr(data['Volume']) # New: Correlation
-    data['Open_vs_Close_Relative'] = (data['Open'] - data['Close']) / (data['Open'] + 1e-9) # New: Open vs Close Relative
+    # Ichimoku Kinko Hyo (useful for visual trend following, but components can be features)
+    # Using default periods: Tenkan=9, Kijun=26, Senkou Span B=52
+    df['Ichimoku_Conversion_Line'] = (df['High'].rolling(window=9).max() + df['Low'].rolling(window=9).min()) / 2
+    df['Ichimoku_Base_Line'] = (df['High'].rolling(window=26).max() + df['Low'].rolling(window=26).min()) / 2
+    df['Ichimoku_Leading_Span_A'] = ((df['Ichimoku_Conversion_Line'] + df['Ichimoku_Base_Line']) / 2).shift(26)
+    df['Ichimoku_Leading_Span_B'] = ((df['High'].rolling(window=52).max() + df['Low'].rolling(window=52).min()) / 2).shift(26)
+    df['Ichimoku_Lagging_Span'] = df['Close'].shift(-26)
 
-    # Combine all selected features
-    all_selected_features = available_features + [
-        'SMA5_Ratio', 'EMA12_Ratio', 'BB_Position', 'MACD_Diff',
-        'EMA_Cross_Signal', 'RSI_Overbought_Sell', 'RSI_Oversold_Buy',
-        'ADX_Strong_Trend', 'Volume_Price_Correlation_5', 'Open_vs_Close_Relative' # Added new ratio features
-    ]
+    # Volatility Indicators
+    df['ATR'] = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['Normalized_ATR'] = df['ATR'] / df['Close']
+    df['Volatility_20'] = df['Log_Return'].rolling(window=20).std() * np.sqrt(252 * (390/15)) # Annualized volatility based on 15-min bars
+    df['Daily_Volatility'] = df['Daily_Return'].rolling(window=20).std() * np.sqrt(252)
 
-    # Filter out any features that might not have been created due to missing data or calculation issues
-    final_features = [f for f in all_selected_features if f in data.columns]
+    # Momentum Indicators
+    df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
+    df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+    df['Momentum'] = talib.MOM(df['Close'], timeperiod=10)
+    df['Stoch_K'], df['Stoch_D'] = talib.STOCH(df['High'], df['Low'], df['Close'],
+                                                fastk_period=14, slowk_period=3, slowd_period=3)
+    df['ADX'] = talib.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['Williams_R'] = talib.WILLR(df['High'], df['Low'], df['Close'], timeperiod=14)
+    df['CCI'] = talib.CCI(df['High'], df['Low'], df['Close'], timeperiod=14)
 
-    print(f"Selected {len(final_features)} features for the model.")
-    return data, final_features
+    # Volume Indicators
+    df['OBV'] = talib.OBV(df['Close'], df['Volume'])
+    # Manual calculation for Chaikin Money Flow (CMF)
+    # Money Flow Multiplier (MFM)
+    df['MFM'] = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
+    # Handle cases where High == Low to avoid division by zero, set MFM to 0
+    df['MFM'] = df['MFM'].replace([np.inf, -np.inf], np.nan).fillna(0)
+    # Money Flow Volume (MFV)
+    df['MFV'] = df['MFM'] * df['Volume']
+    # CMF calculation (Sum of MFV / Sum of Volume over n periods)
+    cmf_period = 20 # Common period for CMF
+    df['CMF'] = df['MFV'].rolling(window=cmf_period).sum() / df['Volume'].rolling(window=cmf_period).sum()
+    # Clean up intermediate columns
+    df = df.drop(columns=['MFM', 'MFV'])
+
+    df['Money_Flow_Index'] = talib.MFI(df['High'], df['Low'], df['Close'], df['Volume'], timeperiod=14)
+
+    # Price Pattern Features
+    df['Parabolic_SAR'] = talib.SAR(df['High'], df['Low'])
+    df['High_Low_Range'] = df['High'] - df['Low']
+    df['HL_Range_Ratio'] = (df['High'] - df['Low']) / df['Close']
+    df['Open_Close_Range'] = df['Open'] - df['Close']
+    df['OC_Range_Ratio'] = (df['Open'] - df['Close']) / df['Open']
+
+    # Synthetic Features
+    df['Buying_Pressure'] = df['Close'] - df['Low']
+    df['Selling_Pressure'] = df['High'] - df['Close']
+    df['Support_Proximity'] = (df['Close'] - df['Low'].rolling(window=5).min()) / df['Close'] # Short-term support
+    df['Resistance_Proximity'] = (df['High'].rolling(window=5).max() - df['Close']) / df['Close'] # Short-term resistance
+    df['Price_vs_SMA50'] = (df['Close'] - df['SMA_50']) / df['SMA_50']
+
+    # Lagged Features
+    df['Log_Return_Lag1'] = df['Log_Return'].shift(1)
+    df['Daily_Return_Lag1'] = df['Daily_Return'].shift(1)
+    df['Daily_Return_Lag2'] = df['Daily_Return'].shift(2)
+    df['Daily_Return_Lag3'] = df['Daily_Return'].shift(3)
+    df['RSI_Lag1'] = df['RSI'].shift(1)
+    df['RSI_Lag2'] = df['RSI'].shift(2)
+    df['RSI_Lag3'] = df['RSI'].shift(3)
+    df['MACD_Lag1'] = df['MACD'].shift(1)
+    df['MACD_Signal_Lag1'] = df['MACD_Signal'].shift(1)
+    df['MACD_Hist_Lag1'] = df['MACD_Hist'].shift(1)
+    df['Volume_Change_Lag1'] = df['Volume_Change'].shift(1)
+    df['Volume_Change_Lag2'] = df['Volume_Change'].shift(2)
+
+    # Ratio Features
+    df['SMA5_Ratio'] = df['Close'] / df['SMA_5']
+    df['EMA12_Ratio'] = df['Close'] / df['EMA_12']
+    df['BB_Position'] = df['BB_PercentB'] # Renaming for clarity if desired
+    df['MACD_Diff'] = df['MACD'] - df['MACD_Signal']
+    df['EMA_Cross_Signal'] = np.where(df['EMA_12'] > df['EMA_26'], 1, 0)
+    df['RSI_Overbought'] = np.where(df['RSI'] > 70, 1, 0)
+    df['RSI_Oversold'] = np.where(df['RSI'] < 30, 1, 0)
+    df['ADX_Strong_Trend'] = np.where(df['ADX'] > 25, 1, 0) # ADX above 25 indicates strong trend
+    df['Volume_Price_Correlation'] = df['Volume'].rolling(window=10).corr(df['Close'])
+    df['Open_vs_Close_Relative'] = (df['Open'] - df['Close']) / df['Open']
+
+    # NEW FEATURE CATEGORIES & EXPANSIONS:
+
+    # 1. More Advanced Price/Volume Interaction Features
+    df['OBV_EMA'] = talib.EMA(df['OBV'], timeperiod=10)
+    df['OBV_Change_5'] = df['OBV'].pct_change(periods=5)
+
+    # Candlestick Pattern Recognition (using talib - 100 for pattern found, -100 for bearish, 0 otherwise)
+    df['CDLENGULFING'] = talib.CDLENGULFING(df['Open'], df['High'], df['Low'], df['Close'])
+    df['CDLHAMMER'] = talib.CDLHAMMER(df['Open'], df['High'], df['Low'], df['Close'])
+    df['CDLDOJI'] = talib.CDLDOJI(df['Open'], df['High'], df['Low'], df['Close'])
+    df['CDLHARAMI'] = talib.CDLHARAMI(df['Open'], df['High'], df['Low'], df['Close'])
+    df['CDLMORNINGSTAR'] = talib.CDLMORNINGSTAR(df['Open'], df['High'], df['Low'], df['Close'])
+    df['CDLEVENINGSTAR'] = talib.CDLEVENINGSTAR(df['Open'], df['High'], df['Low'], df['Close'])
+    df['CDLMARUBOZU'] = talib.CDLMARUBOZU(df['Open'], df['High'], df['Low'], df['Close']) # White or Black Marubozu
+    df['CDLSPINNINGTOP'] = talib.CDLSPINNINGTOP(df['Open'], df['High'], df['Low'], df['Close'])
+
+    # 2. Enhanced Volatility and Range Features
+    # Keltner Channels (using ATR for band width)
+    keltner_multiplier = 2 # Common multiplier
+    df['KC_Middle'] = talib.EMA(df['Close'], timeperiod=20) # Often a 20-period EMA
+    df['KC_Upper'] = df['KC_Middle'] + df['ATR'] * keltner_multiplier
+    df['KC_Lower'] = df['KC_Middle'] - df['ATR'] * keltner_multiplier
+    df['KC_Width'] = (df['KC_Upper'] - df['KC_Lower']) / df['KC_Middle']
+
+    # Renaming for clarity as talib.AD is Accumulation/Distribution Line
+    df['Accumulation_Distribution'] = talib.AD(df['High'], df['Low'], df['Close'], df['Volume'])
+    df['AD_ROC'] = talib.ROC(df['Accumulation_Distribution'], timeperiod=10) # Rate of Change of Accumulation/Distribution
+
+    # 3. Momentum and Oscillators - Deeper Dive
+    df['ROC_5'] = talib.ROC(df['Close'], timeperiod=5)
+    df['ROC_10'] = talib.ROC(df['Close'], timeperiod=10)
+
+    df['Stoch_K_D_Diff'] = df['Stoch_K'] - df['Stoch_D']
+    df['Stoch_Overbought'] = np.where(df['Stoch_K'] > 80, 1, 0)
+    df['Stoch_Oversold'] = np.where(df['Stoch_K'] < 20, 1, 0)
+
+    # Fisher Transform (still noted as not directly in talib and more complex to implement manually accurately)
+    # If you choose to add this, it will require an external library like 'pandas_ta' or a detailed custom function.
+
+    # 4. Inter-Indicator Relationships and Ratios
+    df['SMA5_SMA20_Cross'] = np.where(df['SMA_5'] > df['SMA_20'], 1, 0)
+    df['Price_vs_EMA12'] = (df['Close'] - df['EMA_12']) / df['EMA_12']
+    df['Price_vs_SMA20'] = (df['Close'] - df['SMA_20']) / df['SMA_20']
+
+    # Clean up any NaN values created by feature calculations
+    df = df.dropna()
+
+    return df
 
 def create_prediction_targets(data, forward_period, profit_threshold=0.02, stop_loss_threshold=0.01):
     """
@@ -434,30 +526,37 @@ def select_features_for_model(data):
     """
     # Base selected features (these are the TA indicators calculated previously)
     base_selected_features = [
-        'Open', 'High', 'Low', 'Close', 'Volume', # Including raw data as features
         'Log_Return', 'Daily_Return', 'Volume_Change', 'Price_Volume_Ratio',
-        'SMA_5',
-        'EMA_12', 'EMA_26',
-        'BB_Upper', 'BB_Middle', 'BB_Lower', 'BB_Width',
-        'Ichimoku_Conversion', 'Ichimoku_Base',
-        'ATR', 'Normalized_ATR', 'Volatility_20',
-        'RSI', 'MACD', 'MACD_Signal', 'MOM', 'Stoch_K', 'Stoch_D', 'ADX',
-        'OBV', 'VWAP', 'CMF',
-        'Parabolic_SAR', 'High_Low_Range', 'HL_Range_Ratio',
+        'SMA_5', 'SMA_20', 'SMA_50', 'EMA_12', 'EMA_26', 'EMA_50',
+        'BB_Upper', 'BB_Middle', 'BB_Lower', 'BB_Width', 'BB_PercentB',
+        'Ichimoku_Conversion_Line', 'Ichimoku_Base_Line', 'Ichimoku_Leading_Span_A',
+        'Ichimoku_Leading_Span_B',
+        'ATR', 'Normalized_ATR', 'Volatility_20', 'Daily_Volatility',
+        'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist', 'Momentum', 'Stoch_K', 'Stoch_D',
+        'ADX', 'Williams_R', 'CCI',
+        'OBV', 'CMF', 'Money_Flow_Index',
+        'Parabolic_SAR', 'High_Low_Range', 'HL_Range_Ratio', 'Open_Close_Range', 'OC_Range_Ratio',
         'Buying_Pressure', 'Selling_Pressure', 'Support_Proximity', 'Resistance_Proximity',
-
-        # --- NEW: Added Features ---
-        'Market_Avg_Return', # Inter-asset feature
-        'Hour_Of_Day',       # Time-based
-        'Log_Return_Lag1',   # Lagged feature
-        'Daily_Return_Lag1', # Lagged feature
-        'Daily_Return_Lag2', # Lagged feature
-        'RSI_Lag1',          # Lagged feature
-        'RSI_Lag2',          # Lagged feature
-        'MACD_Lag1',         # Lagged feature
-        'MACD_Signal_Lag1',  # Lagged feature
-        'Volume_Change_Lag1' # Lagged feature
+        'Price_vs_SMA50',
+        'Log_Return_Lag1', 'Daily_Return_Lag1', 'Daily_Return_Lag2', 'Daily_Return_Lag3',
+        'RSI_Lag1', 'RSI_Lag2', 'RSI_Lag3',
+        'MACD_Lag1', 'MACD_Signal_Lag1', 'MACD_Hist_Lag1',
+        'Volume_Change_Lag1', 'Volume_Change_Lag2',
+        'RSI_Overbought', 'RSI_Oversold', 'ADX_Strong_Trend', 'Volume_Price_Correlation',
+        'Open_vs_Close_Relative',
+        # --- NEW FEATURES ADDED ---
+        'OBV_EMA', 'OBV_Change_5',
+        'CDLENGULFING', 'CDLHAMMER', 'CDLDOJI', 'CDLHARAMI', 'CDLMORNINGSTAR',
+        'CDLEVENINGSTAR', 'CDLMARUBOZU', 'CDLSPINNINGTOP',
+        'KC_Middle', 'KC_Upper', 'KC_Lower', 'KC_Width',
+        'Chaikin_Volatility', 'Chaikin_Volatility_ROC',
+        'ROC_5', 'ROC_10',
+        'Stoch_K_D_Diff', 'Stoch_Overbought', 'Stoch_Oversold',
+        'SMA5_SMA20_Cross', 'Price_vs_EMA12', 'Price_vs_SMA20',
+        # Remove this line if you didn't implement Fisher Transform:
+        # 'Fisher_Transform',
     ]
+    
 
     # Filter out features that are unlikely to have enough data for short intraday periods
     filtered_base_features = [f for f in base_selected_features if f in data.columns and f not in ['SMA_200']]
@@ -473,7 +572,6 @@ def select_features_for_model(data):
     data['EMA_Cross_Signal'] = (data['EMA_12'] > data['EMA_26']).astype(int)
     data['RSI_Overbought_Sell'] = (data['RSI'] > 70).astype(int)
     data['RSI_Oversold_Buy'] = (data['RSI'] < 30).astype(int)
-
 
     # Combine all selected features
     all_selected_features = available_features + [
