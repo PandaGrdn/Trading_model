@@ -162,6 +162,9 @@ def calculate_selected_features(data):
 
     # --- Time-based features (calculated BEFORE grouping) ---
     data['Hour_Of_Day'] = data.index.hour
+    data['Day_Of_Week'] = data.index.dayofweek # New: Day of the week
+    data['Day_Of_Month'] = data.index.day     # New: Day of the month
+    data['Month_Of_Year'] = data.index.month   # New: Month of the year
 
     # Now, proceed with grouped calculations for ticker-specific features
     for ticker, group in grouped:
@@ -170,24 +173,31 @@ def calculate_selected_features(data):
         # === Moving Averages Group ===
         df['SMA_5'] = talib.SMA(df['Close'], timeperiod=5)
         df['SMA_20'] = talib.SMA(df['Close'], timeperiod=20)
-        df['SMA_50'] = talib.SMA(df['Close'], timeperiod=50) # May not have enough data for 50 periods in 20 days
-        df['SMA_200'] = talib.SMA(df['Close'], timeperiod=200) # Definitely not enough for 200 periods in ~20 days of 15m data
+        df['SMA_50'] = talib.SMA(df['Close'], timeperiod=50) 
+        df['SMA_200'] = talib.SMA(df['Close'], timeperiod=200) 
 
         df['EMA_12'] = talib.EMA(df['Close'], timeperiod=12)
         df['EMA_26'] = talib.EMA(df['Close'], timeperiod=26)
+        df['EMA_50'] = talib.EMA(df['Close'], timeperiod=50) # New EMA
 
         # === Bollinger Bands Group ===
         df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = talib.BBANDS(df['Close'], timeperiod=20)
-        df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / (df['BB_Middle'] + 1e-9) # Add epsilon
+        df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / (df['BB_Middle'] + 1e-9) 
+        df['BB_PercentB'] = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'] + 1e-9) # New: Percent B
 
         # === Ichimoku Group (1 representative) ===
         df['Ichimoku_Conversion'] = (df['High'].rolling(window=9).max() + df['Low'].rolling(window=9).min()) / 2
         df['Ichimoku_Base'] = (df['High'].rolling(window=26).max() + df['Low'].rolling(window=26).min()) / 2
+        # Adding Leading Span A and B, and Lagging Span (Chikou Span)
+        df['Ichimoku_Leading_Span_A'] = ((df['Ichimoku_Conversion'] + df['Ichimoku_Base']) / 2).shift(26)
+        df['Ichimoku_Leading_Span_B'] = ((df['High'].rolling(window=52).max() + df['Low'].rolling(window=52).min()) / 2).shift(26)
+        df['Ichimoku_Lagging_Span'] = df['Close'].shift(-26) # Chikou Span
 
         # === Volatility Group ===
         df['ATR'] = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df['Normalized_ATR'] = df['ATR'] / (df['Close'] + 1e-9) # Add epsilon
+        df['Normalized_ATR'] = df['ATR'] / (df['Close'] + 1e-9) 
         df['Volatility_20'] = df['Log_Return'].rolling(window=20).std()
+        df['Volatility_Daily'] = df['Daily_Return'].rolling(window=5).std() # New: Shorter term volatility
 
         # === Momentum Group ===
         df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
@@ -195,39 +205,49 @@ def calculate_selected_features(data):
         df['MOM'] = talib.MOM(df['Close'], timeperiod=10)
         df['Stoch_K'], df['Stoch_D'] = talib.STOCH(df['High'], df['Low'], df['Close'])
         df['ADX'] = talib.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
+        df['Williams_R'] = talib.WILLR(df['High'], df['Low'], df['Close'], timeperiod=14) # New: Williams %R
+        df['CCI'] = talib.CCI(df['High'], df['Low'], df['Close'], timeperiod=14) # New: Commodity Channel Index
 
         # === Volume Indicator Group ===
         df['OBV'] = talib.OBV(df['Close'], df['Volume'])
         df['VWAP'] = ((df['Close'] * df['Volume']).rolling(window=20).sum()) / (df['Volume'].rolling(window=20).sum() + 1e-9)
-        df['CMF'] = talib.ADOSC(df['High'], df['Low'], df['Close'], df['Volume'], fastperiod=3, slowperiod=10) # Chaikin Money Flow (ADOSC is Accumulation/Distribution Oscillator)
+        df['CMF'] = talib.ADOSC(df['High'], df['Low'], df['Close'], df['Volume'], fastperiod=3, slowperiod=10)
+        df['Money_Flow_Index'] = talib.MFI(df['High'], df['Low'], df['Close'], df['Volume'], timeperiod=14) # New: MFI
 
         # === Price Pattern Group ===
         df['Parabolic_SAR'] = talib.SAR(df['High'], df['Low'])
         df['High_Low_Range'] = df['High'] - df['Low']
-        df['HL_Range_Ratio'] = df['High_Low_Range'] / (df['Close'] + 1e-9) # Add epsilon
+        df['HL_Range_Ratio'] = df['High_Low_Range'] / (df['Close'] + 1e-9) 
+        df['Open_Close_Range'] = df['Close'] - df['Open'] # New: Open-Close Range
+        df['OC_Range_Ratio'] = df['Open_Close_Range'] / (df['Close'] + 1e-9) # New: Open-Close Range Ratio
 
         # === Synthetic Features Group ===
         df['Buying_Pressure'] = ((df['Close'] - df['Low']) / (df['High'] - df['Low'] + 1e-9)).fillna(0) * df['Volume']
         df['Selling_Pressure'] = ((df['High'] - df['Close']) / (df['High'] - df['Low'] + 1e-9)).fillna(0) * df['Volume']
         df['Support_Proximity'] = (df['Close'] - df['BB_Lower']) / (df['Close'] + 1e-9)
         df['Resistance_Proximity'] = (df['BB_Upper'] - df['Close']) / (df['Close'] + 1e-9)
+        df['Price_vs_SMA50'] = (df['Close'] - df['SMA_50']) / (df['SMA_50'] + 1e-9) # New: Price vs SMA50
 
         # --- NEW: Lagged Features (Adjust periods as needed for your interval) ---
         # Lagged returns
         df['Log_Return_Lag1'] = df['Log_Return'].shift(1)
         df['Daily_Return_Lag1'] = df['Daily_Return'].shift(1)
         df['Daily_Return_Lag2'] = df['Daily_Return'].shift(2)
+        df['Daily_Return_Lag3'] = df['Daily_Return'].shift(3) # New Lag
 
         # Lagged RSI
         df['RSI_Lag1'] = df['RSI'].shift(1)
         df['RSI_Lag2'] = df['RSI'].shift(2)
+        df['RSI_Lag3'] = df['RSI'].shift(3) # New Lag
 
         # Lagged MACD
         df['MACD_Lag1'] = df['MACD'].shift(1)
         df['MACD_Signal_Lag1'] = df['MACD_Signal'].shift(1)
+        df['MACD_Hist_Lag1'] = (df['MACD'] - df['MACD_Signal']).shift(1) # New: Lagged MACD Histogram
 
         # Lagged Volume Change
         df['Volume_Change_Lag1'] = df['Volume_Change'].shift(1)
+        df['Volume_Change_Lag2'] = df['Volume_Change'].shift(2) # New Lag
 
         # --- NEW: Replace infinities with NaN right after calculation for each group ---
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
@@ -238,6 +258,9 @@ def calculate_selected_features(data):
     # This ensures they are present for all rows after the grouped operations
     result = result.merge(market_avg_return, left_index=True, right_index=True, how='left')
     result['Hour_Of_Day'] = result.index.hour
+    result['Day_Of_Week'] = result.index.dayofweek
+    result['Day_Of_Month'] = result.index.day
+    result['Month_Of_Year'] = result.index.month
 
     # Fill any remaining NaNs created by TA-Lib (e.g., initial periods of MAs)
     result = result.fillna(method='ffill').fillna(method='bfill') # Forward fill, then backward fill for leading NaNs
@@ -245,7 +268,80 @@ def calculate_selected_features(data):
 
     return result
 
-def create_prediction_targets(data, forward_period, profit_threshold=0.005, stop_loss_threshold=0.005):
+def select_features_for_model(data):
+    """
+    Selects a predefined set of features for the model and creates additional
+    ratio-based features to capture relationships between indicators and price.
+
+    Args:
+        data (pd.DataFrame): DataFrame containing raw data and calculated technical indicators.
+
+    Returns:
+        tuple:
+            - pd.DataFrame: The input DataFrame with new ratio features added.
+            - list: A list of all selected feature column names for model training.
+    """
+    # Base selected features (these are the TA indicators calculated previously)
+    base_selected_features = [
+        'Open', 'High', 'Low', 'Close', 'Volume', 
+        'Log_Return', 'Daily_Return', 'Volume_Change', 'Price_Volume_Ratio',
+        'SMA_5', 'SMA_20', 'SMA_50', 
+        'EMA_12', 'EMA_26', 'EMA_50', # Added EMA_50
+        'BB_Upper', 'BB_Middle', 'BB_Lower', 'BB_Width', 'BB_PercentB', # Added BB_PercentB
+        'Ichimoku_Conversion', 'Ichimoku_Base', 'Ichimoku_Leading_Span_A', 
+        'Ichimoku_Leading_Span_B', 'Ichimoku_Lagging_Span', # Added Ichimoku components
+        'ATR', 'Normalized_ATR', 'Volatility_20', 'Volatility_Daily', # Added Volatility_Daily
+        'RSI', 'MACD', 'MACD_Signal', 'MOM', 'Stoch_K', 'Stoch_D', 'ADX',
+        'Williams_R', 'CCI', # Added Williams %R and CCI
+        'OBV', 'VWAP', 'CMF', 'Money_Flow_Index', # Added Money_Flow_Index
+        'Parabolic_SAR', 'High_Low_Range', 'HL_Range_Ratio',
+        'Open_Close_Range', 'OC_Range_Ratio', # Added Open/Close range features
+        'Buying_Pressure', 'Selling_Pressure', 'Support_Proximity', 'Resistance_Proximity',
+        'Price_vs_SMA50', # Added Price vs SMA50
+
+        # Lagged features
+        'Market_Avg_Return', 
+        'Hour_Of_Day', 'Day_Of_Week', 'Day_Of_Month', 'Month_Of_Year', # Added more time features
+        'Log_Return_Lag1', 
+        'Daily_Return_Lag1', 'Daily_Return_Lag2', 'Daily_Return_Lag3', # Added Daily_Return_Lag3
+        'RSI_Lag1', 'RSI_Lag2', 'RSI_Lag3', # Added RSI_Lag3
+        'MACD_Lag1', 'MACD_Signal_Lag1', 'MACD_Hist_Lag1', # Added MACD_Hist_Lag1
+        'Volume_Change_Lag1', 'Volume_Change_Lag2' # Added Volume_Change_Lag2
+    ]
+
+    # Filter out features that are unlikely to have enough data for short intraday periods
+    # Note: SMA_200 might still be too long for very short intraday intervals (e.g., 15m over 20 days)
+    filtered_base_features = [f for f in base_selected_features if f in data.columns]
+
+    # Ensure all base features exist in the data before trying to create ratios
+    available_features = [f for f in filtered_base_features if f in data.columns]
+
+    # Create additional ratio-based features to capture relationships
+    data['SMA5_Ratio'] = data['Close'] / (data['SMA_5'] + 1e-9)
+    data['EMA12_Ratio'] = data['Close'] / (data['EMA_12'] + 1e-9)
+    data['BB_Position'] = (data['Close'] - data['BB_Lower']) / (data['BB_Upper'] - data['BB_Lower'] + 1e-9)
+    data['MACD_Diff'] = data['MACD'] - data['MACD_Signal']
+    data['EMA_Cross_Signal'] = (data['EMA_12'] > data['EMA_26']).astype(int)
+    data['RSI_Overbought_Sell'] = (data['RSI'] > 70).astype(int)
+    data['RSI_Oversold_Buy'] = (data['RSI'] < 30).astype(int)
+    data['ADX_Strong_Trend'] = (data['ADX'] > 25).astype(int) # New: ADX for strong trend indication
+    data['Volume_Price_Correlation_5'] = data['Close'].rolling(window=5).corr(data['Volume']) # New: Correlation
+    data['Open_vs_Close_Relative'] = (data['Open'] - data['Close']) / (data['Open'] + 1e-9) # New: Open vs Close Relative
+
+    # Combine all selected features
+    all_selected_features = available_features + [
+        'SMA5_Ratio', 'EMA12_Ratio', 'BB_Position', 'MACD_Diff',
+        'EMA_Cross_Signal', 'RSI_Overbought_Sell', 'RSI_Oversold_Buy',
+        'ADX_Strong_Trend', 'Volume_Price_Correlation_5', 'Open_vs_Close_Relative' # Added new ratio features
+    ]
+
+    # Filter out any features that might not have been created due to missing data or calculation issues
+    final_features = [f for f in all_selected_features if f in data.columns]
+
+    print(f"Selected {len(final_features)} features for the model.")
+    return data, final_features
+
+def create_prediction_targets(data, forward_period, profit_threshold=0.02, stop_loss_threshold=0.01):
     """
     Create prediction targets based on the 'first touch' of a profit or stop-loss threshold
     within a specified forward period.
@@ -264,6 +360,7 @@ def create_prediction_targets(data, forward_period, profit_threshold=0.005, stop
                       and 'Return_Magnitude' columns.
     """
     print(f"Creating prediction targets based on first touch within {forward_period} intervals...")
+    # Initialize these columns if they don't exist, and ensure they are float/numeric
     data['Target'] = np.nan
     data['Future_Return'] = np.nan
     data['Return_Magnitude'] = np.nan
@@ -271,16 +368,22 @@ def create_prediction_targets(data, forward_period, profit_threshold=0.005, stop
     grouped = data.groupby('Ticker')
 
     for ticker, group in grouped:
-        for i in range(len(group) - forward_period):
-            current_close = group['Close'].iloc[i]
-            
+        # It's better to work with a copy of the group to avoid SettingWithCopyWarning
+        # and then update the original 'data' DataFrame using .loc based on index.
+        temp_group = group.copy() 
+        
+        for i in range(len(temp_group) - forward_period):
+            current_close = temp_group['Close'].iloc[i]
+            current_index = temp_group.index[i] # Get the actual datetime index
+
             # Slice the future data for the current row's forward period
-            future_prices = group['Close'].iloc[i+1 : i+1+forward_period]
+            future_prices = temp_group['Close'].iloc[i+1 : i+1+forward_period]
             
             if future_prices.empty:
+                # If there's no future data, this row can't have a target.
+                # It will remain NaN and be dropped later.
                 continue
 
-            # Calculate the upper and lower bounds for profit/stop loss
             profit_price = current_close * (1 + profit_threshold)
             stop_loss_price = current_close * (1 - stop_loss_threshold)
 
@@ -288,24 +391,28 @@ def create_prediction_targets(data, forward_period, profit_threshold=0.005, stop
             for j, future_price in enumerate(future_prices):
                 # Check for profit touch
                 if future_price >= profit_price:
-                    data.loc[group.index[i], 'Target'] = 1
-                    data.loc[group.index[i], 'Future_Return'] = (future_price - current_close) / current_close
+                    data.loc[current_index, 'Target'] = 1
+                    data.loc[current_index, 'Future_Return'] = (future_price - current_close) / current_close
                     target_set = True
                     break # Target hit, move to next initial row
 
                 # Check for stop loss touch
                 if future_price <= stop_loss_price:
-                    data.loc[group.index[i], 'Target'] = 0
-                    data.loc[group.index[i], 'Future_Return'] = (future_price - current_close) / current_close
+                    data.loc[current_index, 'Target'] = 0
+                    data.loc[current_index, 'Future_Return'] = (future_price - current_close) / current_close
                     target_set = True
                     break # Target hit, move to next initial row
+            
+            # If neither threshold is hit within the forward period, assign target based on final price
             if not target_set:
-                data.loc[group.index[i], 'Target'] = 0
-                data['Future_Return'] = data.groupby('Ticker')['Close'].pct_change(forward_period).shift(-forward_period)
-            
-            
-            # If neither threshold is hit within the forward period, target remains NaN.
-            # This implicitly removes these instances from training when NaNs are dropped.
+                # Get the price at the very end of the forward_period
+                final_future_price = temp_group['Close'].iloc[i + forward_period]
+                final_return = (final_future_price - current_close) / current_close
+                
+                data.loc[current_index, 'Future_Return'] = final_return
+                # If the final return is positive, it's a "win" (Target=1), otherwise a "loss" (Target=0)
+                # This ensures even if no hard profit target is hit, positive movement is still a '1'
+                data.loc[current_index, 'Target'] = 1 if final_return >= 0 else 0
             
     # Calculate the absolute magnitude of the future return for analysis
     data['Return_Magnitude'] = data['Future_Return'].abs()
@@ -329,7 +436,7 @@ def select_features_for_model(data):
     base_selected_features = [
         'Open', 'High', 'Low', 'Close', 'Volume', # Including raw data as features
         'Log_Return', 'Daily_Return', 'Volume_Change', 'Price_Volume_Ratio',
-        'SMA_5', 'SMA_20', 'SMA_50', # SMA_200 might not have enough data for 15m intervals
+        'SMA_5',
         'EMA_12', 'EMA_26',
         'BB_Upper', 'BB_Middle', 'BB_Lower', 'BB_Width',
         'Ichimoku_Conversion', 'Ichimoku_Base',
@@ -360,7 +467,6 @@ def select_features_for_model(data):
 
     # Create additional ratio-based features to capture relationships
     data['SMA5_Ratio'] = data['Close'] / (data['SMA_5'] + 1e-9)
-    data['SMA20_Ratio'] = data['Close'] / (data['SMA_20'] + 1e-9)
     data['EMA12_Ratio'] = data['Close'] / (data['EMA_12'] + 1e-9)
     data['BB_Position'] = (data['Close'] - data['BB_Lower']) / (data['BB_Upper'] - data['BB_Lower'] + 1e-9)
     data['MACD_Diff'] = data['MACD'] - data['MACD_Signal']
@@ -371,7 +477,7 @@ def select_features_for_model(data):
 
     # Combine all selected features
     all_selected_features = available_features + [
-        'SMA5_Ratio', 'SMA20_Ratio',
+        'SMA5_Ratio',
         'EMA12_Ratio', 'BB_Position', 'MACD_Diff',
         'EMA_Cross_Signal', 'RSI_Overbought_Sell', 'RSI_Oversold_Buy'
     ]
@@ -520,7 +626,7 @@ def train_prediction_model(data, features):
     
     return final_model, scaler, features_for_model_training # Return the correct feature names
 
-def calculate_position_size(confidence, max_position_pct=5.0, min_confidence=0.55):
+def calculate_position_size(confidence, max_position_pct=5.0, min_confidence=0.65):
     """
     Calculates the percentage of portfolio to allocate based on model confidence.
     A higher confidence leads to a larger position size, up to max_position_pct.
@@ -576,14 +682,14 @@ def calculate_risk_metrics(data_slice, price, confidence, volatility_metric='Nor
     
     # Stop distance is a multiple of volatility and price, adjusted by confidence
     # 2.5 is a common multiplier for ATR-based stops
-    stop_distance = volatility * price * 2.5 * confidence_factor
+    stop_distance = volatility * price * 1 * confidence_factor
     
     # Stop Loss for a BUY signal: below the entry price
     stop_loss = price - stop_distance
     
     # Risk/Reward Ratio: dynamically adjust based on confidence
     # Higher confidence can justify a slightly higher risk/reward target
-    risk_reward_ratio = 1.5 + (confidence * 1.0) # Scale confidence (0-1) to add to 1.5-2.5
+    risk_reward_ratio = 1.5 # Scale confidence (0-1) to add to 1.5-2.5
     
     # Take Profit for a BUY signal: above the entry price by risk_reward_ratio * stop_distance
     take_profit = price + (stop_distance * risk_reward_ratio)
@@ -595,7 +701,7 @@ def calculate_risk_metrics(data_slice, price, confidence, volatility_metric='Nor
     }
 
 
-def generate_trading_signals(model, scaler, data, features, min_confidence=0.55):
+def generate_trading_signals(model, scaler, data, features, min_confidence=0.65):
     """
     Generates trading signals with correctly calculated, ticker-specific risk metrics.
     This version uses a precise assignment method to prevent write errors and
@@ -878,7 +984,8 @@ if __name__ == "__main__":
          # Reduced crypto tickers
     ]
     all_stock_tickers = [
-        'TSLA', 'NVDA', 'AMD', 'GOOGL', 'AAPL', 'AMZN', 'PFE', 'CSCO' # Reduced stock tickers
+        'BTC-USD', 'ETH-USD', 'SOL-USD', 'ADA-USD', 'XRP-USD', 
+        'AVAX-USD', 'LINK-USD', 'DOGE-USD' # Reduced stock tickers
     ]
     
     # Combine all tickers for the overall test run
@@ -895,13 +1002,13 @@ if __name__ == "__main__":
     FORCE_API_DOWNLOAD_FOR_LIVE_SIGNALS = True
 
     # Define the minimum confidence threshold for a BUY signal
-    MIN_CONFIDENCE_THRESHOLD = 0.55 # New variable defined here
+    MIN_CONFIDENCE_THRESHOLD = 0.65 # New variable defined here
 
     # Define the ticker you want to exclude from TRAINING but include in TESTING
     # Set to None if you want to train on and test on all tickers provided
     UNSEEN_TICKER_FOR_TEST = 'PLUG' # Example: Test PLUG as an unseen stock.
 
-    FORWARD = 4
+    FORWARD = 10
 
     # NOTE: 'PLUG' is currently not in ALL_TICKERS_FOR_RUN. If you intend to test 'PLUG'
     # as an unseen ticker, please ensure it's added to ALL_TICKERS_FOR_RUN.
@@ -1015,6 +1122,7 @@ if __name__ == "__main__":
 
                     # --- NEW: Save Live Signals to File ---
                     if live_signals is not None and not live_signals.empty:
+                        live_signals = live_signals.set_index(['DateTime', 'Ticker'])
                         print("\n--- Saving Final Signals ---")
                         SIGNALS_CACHE_DIR = 'signals_cache'
                         if not os.path.exists(SIGNALS_CACHE_DIR):

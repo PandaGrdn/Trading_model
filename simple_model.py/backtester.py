@@ -118,12 +118,13 @@ class CryptoBacktester:
             stop_loss_level = position.get('stop_loss', np.nan)
             take_profit_level = position.get('take_profit', np.nan)
 
-            if pd.notna(stop_loss_level) and current_low <= stop_loss_level:
-                exit_price = stop_loss_level
-                exit_reason = 'Stop-Loss Hit'
-            elif pd.notna(take_profit_level) and current_high >= take_profit_level:
+            if pd.notna(take_profit_level) and current_high >= take_profit_level:
                 exit_price = take_profit_level
                 exit_reason = 'Take-Profit Hit'
+            elif pd.notna(stop_loss_level) and current_low <= stop_loss_level:
+                exit_price = stop_loss_level
+                exit_reason = 'Stop-Loss Hit'
+            
                 
             if exit_price:
                 self._execute_sell(date, ticker, exit_price, exit_reason)
@@ -325,9 +326,9 @@ class CryptoBacktester:
 if __name__ == "__main__":
     # --- Configuration ---
     SIGNALS_CACHE_DIR = 'signals_cache'
-    TEST_START_DATE = '2025-06-10'
+    TEST_START_DATE = '2025-06-11'
     # Use the current date to match the filename from the generator script
-    TEST_END_DATE = '2025-06-20'
+    TEST_END_DATE = '2025-06-21'
     INITIAL_CAPITAL = 100000.0
     FEE_RATE = 0.001 # Example: 0.1% fee
 
