@@ -433,7 +433,7 @@ def calculate_selected_features(df):
 
     return df
 
-def create_prediction_targets(data, forward_period, profit_threshold=0.02, stop_loss_threshold=0.01):
+def create_prediction_targets(data, forward_period, profit_threshold=0.05, stop_loss_threshold=0.005):
     """
     Create prediction targets based on the 'first touch' of a profit or stop-loss threshold
     within a specified forward period.
@@ -504,7 +504,7 @@ def create_prediction_targets(data, forward_period, profit_threshold=0.02, stop_
                 data.loc[current_index, 'Future_Return'] = final_return
                 # If the final return is positive, it's a "win" (Target=1), otherwise a "loss" (Target=0)
                 # This ensures even if no hard profit target is hit, positive movement is still a '1'
-                data.loc[current_index, 'Target'] = 1 if final_return >= 0 else 0
+                data.loc[current_index, 'Target'] = 1 if final_return > 0.02 else 0
             
     # Calculate the absolute magnitude of the future return for analysis
     data['Return_Magnitude'] = data['Future_Return'].abs()
@@ -780,7 +780,7 @@ def calculate_risk_metrics(data_slice, price, confidence, volatility_metric='Nor
     
     # Stop distance is a multiple of volatility and price, adjusted by confidence
     # 2.5 is a common multiplier for ATR-based stops
-    stop_distance = volatility * price * 1 * confidence_factor
+    stop_distance = volatility * price * 1.5 * confidence_factor
     
     # Stop Loss for a BUY signal: below the entry price
     stop_loss = price - stop_distance
@@ -799,7 +799,7 @@ def calculate_risk_metrics(data_slice, price, confidence, volatility_metric='Nor
     }
 
 
-def generate_trading_signals(model, scaler, data, features, min_confidence=0.65):
+def generate_trading_signals(model, scaler, data, features, min_confidence=0.55, cooldown_intervals=5):
     """
     Generates trading signals with correctly calculated, ticker-specific risk metrics.
     This version uses a precise assignment method to prevent write errors and
@@ -828,16 +828,31 @@ def generate_trading_signals(model, scaler, data, features, min_confidence=0.65)
     signals['Take_Profit'] = np.nan
     signals['Risk_Reward'] = np.nan
 
+    # Dictionary to store the last time a buy signal was generated for each ticker
+    last_buy_time_by_ticker = {}
+    
+    # Calculate cooldown duration
+    cooldown_delta = timedelta(minutes=cooldown_intervals * 15)
+
     # --- DEFINITIVE FIX FOR CALCULATION AND ASSIGNMENT ---
     for i in range(len(signals)):
+        current_ticker = signals['Ticker'].iloc[i]
+        current_date = signals.index[i]
         if signals['Signal'].iloc[i] == 1:
-            # 1. Get data for the current row
-            current_ticker = signals['Ticker'].iloc[i]
-            current_date = signals.index[i]
-            
+            if current_ticker in last_buy_time_by_ticker:
+                time_since_last_buy = current_date - last_buy_time_by_ticker[current_ticker]
+                if time_since_last_buy < cooldown_delta:
+                    # Suppress the signal if within the cooldown period
+                    signals.loc[signals.index[i], 'Signal'] = 0
+                else:
+                    # Allow the signal and update last buy time
+                    last_buy_time_by_ticker[current_ticker] = current_date
+            else:
+                last_buy_time_by_ticker[current_ticker] = current_date
             # 2. **CRITICAL FIX**: Correctly filter for THIS ticker's history ONLY
+
+        if signals['Signal'].iloc[i] == 1:
             ticker_history = signals[(signals['Ticker'] == current_ticker) & (signals.index <= current_date)]
-            
             if not ticker_history.empty:
                 # 3. Calculate risk metrics using the clean history
                 risk_metrics = calculate_risk_metrics(
