@@ -359,6 +359,7 @@ if __name__ == "__main__":
             if not backtester.trades_df.empty and 'PnL' in backtester.trades_df.columns:
                 print("\n--- Final Trade Log ---")
                 completed_trades = backtester.trades_df.dropna(subset=['PnL'])
+                reported_logs = completed_trades[['Ticker','EntryDate','ExitDate','EntryPrice','ExitPrice']]
                 print(completed_trades[['Ticker', 'EntryDate', 'ExitDate', 'PnL', 'EntryPrice', 'ExitPrice', 'Reason']].round(2))
 
                 if not os.path.exists(TRADE_LOG_CACHE_DIR):
@@ -374,6 +375,6 @@ if __name__ == "__main__":
                         os.remove(file_path)
 
                 print(f"Saving trade log to: {trade_log_filename}")
-                completed_trades.to_csv(trade_log_filename, index=False)
+                reported_logs.to_csv(trade_log_filename, index=False)
                 print("Trade log saved successfully.")
 
