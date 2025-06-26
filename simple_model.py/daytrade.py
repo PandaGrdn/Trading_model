@@ -811,7 +811,7 @@ def train_prediction_model(data, features):
     
     return final_model, scaler, features_for_model_training # Return the correct feature names
 
-def calculate_position_size(confidence, max_position_pct=5.0, min_confidence=0.65):
+def calculate_position_size(confidence, max_position_pct=3.0, min_confidence=0.65):
     """
     Calculates the percentage of portfolio to allocate based on model confidence.
     A higher confidence leads to a larger position size, up to max_position_pct.
@@ -1221,7 +1221,7 @@ if __name__ == "__main__":
     FORCE_API_DOWNLOAD_FOR_LIVE_SIGNALS = True
 
     # Define the minimum confidence threshold for a BUY signal
-    MIN_CONFIDENCE_THRESHOLD = 0.65 # New variable defined here
+    MIN_CONFIDENCE_THRESHOLD = 0.55 # New variable defined here
 
     # Define the ticker you want to exclude from TRAINING but include in TESTING
     # Set to None if you want to train on and test on all tickers provided
