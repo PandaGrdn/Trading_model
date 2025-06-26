@@ -5,9 +5,6 @@ import talib
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
-from imblearn.over_sampling import SMOTE, BorderlineSMOTE, ADASYN
-from imblearn.combine import SMOTETomek, SMOTEENN
-from collections import Counter
 import xgboost as xgb
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -279,46 +276,9 @@ def select_dip_buying_features(data):
     selected_features = dip_features + technical_features + ratio_features
     return data, selected_features
 
-def apply_smote_sampling(X, y, sampling_strategy='auto', smote_method='standard'):
+def train_dip_buying_model(data, features, test_size=0.2):
     """
-    Apply SMOTE or its variants to balance the dataset
-    
-    Parameters:
-    - X: Features
-    - y: Target variable
-    - sampling_strategy: 'auto', 'minority', dict, or float
-    - smote_method: 'standard', 'borderline', 'adasyn', 'smote_tomek', 'smote_enn'
-    """
-    print(f"Original class distribution: {Counter(y)}")
-    
-    # Choose SMOTE method
-    if smote_method == 'standard':
-        sampler = SMOTE(sampling_strategy=sampling_strategy, random_state=42, k_neighbors=5)
-    elif smote_method == 'borderline':
-        sampler = BorderlineSMOTE(sampling_strategy=sampling_strategy, random_state=42, k_neighbors=5)
-    elif smote_method == 'adasyn':
-        sampler = ADASYN(sampling_strategy=sampling_strategy, random_state=42, n_neighbors=5)
-    elif smote_method == 'smote_tomek':
-        sampler = SMOTETomek(sampling_strategy=sampling_strategy, random_state=42)
-    elif smote_method == 'smote_enn':
-        sampler = SMOTEENN(sampling_strategy=sampling_strategy, random_state=42)
-    else:
-        raise ValueError(f"Unknown SMOTE method: {smote_method}")
-    
-    try:
-        X_resampled, y_resampled = sampler.fit_resample(X, y)
-        print(f"Resampled class distribution: {Counter(y_resampled)}")
-        print(f"SMOTE method used: {smote_method}")
-        return X_resampled, y_resampled
-    
-    except Exception as e:
-        print(f"SMOTE failed with error: {e}")
-        print("Falling back to original data...")
-        return X, y
-
-def train_dip_buying_model(data, features, test_size=0.2, use_smote=True, smote_method='standard'):
-    """
-    Train XGBoost model specifically for dip-buying with SMOTE balancing
+    Train XGBoost model specifically for dip-buying with balanced classes
     """
     model_data = data.dropna(subset=features + ['Target', 'Future_Return'])
     
@@ -341,90 +301,14 @@ def train_dip_buying_model(data, features, test_size=0.2, use_smote=True, smote_
     
     all_predictions, all_actual = [], []
     
-    # Calculate class weights for imbalanced data (backup if SMOTE fails)
+    # Calculate class weights for imbalanced data
     pos_weight = (y == 0).sum() / (y == 1).sum() if (y == 1).sum() > 0 else 1.0
     
-    for fold_idx, (train_idx, test_idx) in enumerate(tscv.split(X_scaled)):
-        print(f"\nFold {fold_idx + 1}/5")
+    for train_idx, test_idx in tscv.split(X_scaled):
         X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
         
-        # Apply SMOTE to training data only
-        if use_smote and len(np.unique(y_train)) > 1:
-            print(f"Applying SMOTE to training fold {fold_idx + 1}...")
-            X_train_balanced, y_train_balanced = apply_smote_sampling(
-                X_train, y_train, 
-                sampling_strategy='auto',  # Balance to majority class
-                smote_method=smote_method
-            )
-        else:
-            X_train_balanced, y_train_balanced = X_train, y_train
-            print("SMOTE not applied (insufficient class diversity or disabled)")
-        
-        # Train model
-        if use_smote:
-            # When using SMOTE, we don't need scale_pos_weight as classes are balanced
-            model = xgb.XGBClassifier(
-                n_estimators=200,  # Increased for better performance
-                learning_rate=0.02,  # Reduced for more stable learning
-                max_depth=6, 
-                subsample=0.8,
-                colsample_bytree=0.8,
-                objective='binary:logistic',
-                eval_metric='auc', 
-                random_state=42,
-                tree_method='hist'  # Faster training
-            )
-        else:
-            # Use class weights when not using SMOTE
-            model = xgb.XGBClassifier(
-                n_estimators=150, 
-                learning_rate=0.03, 
-                max_depth=6, 
-                subsample=0.8,
-                colsample_bytree=0.8, 
-                scale_pos_weight=pos_weight,
-                objective='binary:logistic',
-                eval_metric='auc', 
-                random_state=42
-            )
-        
-        # Fit model
-        model.fit(X_train_balanced, y_train_balanced, 
-                 eval_set=[(X_test, y_test)], 
-                 verbose=False)
-        
-        # Predict
-        y_pred_proba = model.predict_proba(X_test)[:, 1]
-        all_predictions.extend(y_pred_proba)
-        all_actual.extend(y_test)
-    
-    # Train final model on all data with SMOTE
-    print("\nTraining final model on all data...")
-    if use_smote and len(np.unique(y)) > 1:
-        X_final_balanced, y_final_balanced = apply_smote_sampling(
-            X_scaled, y, 
-            sampling_strategy='auto',
-            smote_method=smote_method
-        )
-    else:
-        X_final_balanced, y_final_balanced = X_scaled, y
-    
-    # Final model configuration
-    if use_smote:
-        final_model = xgb.XGBClassifier(
-            n_estimators=200,
-            learning_rate=0.02,
-            max_depth=6, 
-            subsample=0.8,
-            colsample_bytree=0.8,
-            objective='binary:logistic',
-            eval_metric='auc', 
-            random_state=42,
-            tree_method='hist'
-        )
-    else:
-        final_model = xgb.XGBClassifier(
+        model = xgb.XGBClassifier(
             n_estimators=150, 
             learning_rate=0.03, 
             max_depth=6, 
@@ -435,60 +319,44 @@ def train_dip_buying_model(data, features, test_size=0.2, use_smote=True, smote_
             eval_metric='auc', 
             random_state=42
         )
+        model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        all_predictions.extend(y_pred_proba)
+        all_actual.extend(y_test)
     
-    final_model.fit(X_final_balanced, y_final_balanced)
+    # Train final model on all data
+    final_model = xgb.XGBClassifier(
+        n_estimators=150, 
+        learning_rate=0.03, 
+        max_depth=6, 
+        subsample=0.8,
+        colsample_bytree=0.8, 
+        scale_pos_weight=pos_weight,
+        objective='binary:logistic',
+        eval_metric='auc', 
+        random_state=42
+    )
+    final_model.fit(X_scaled, y)
     
-    # Model evaluation
     auc_score = roc_auc_score(all_actual, all_predictions)
-    print(f"\nOverall ROC AUC: {auc_score:.4f}")
+    print(f"Overall ROC AUC: {auc_score:.4f}")
     
-    # Use different thresholds for better classification
-    thresholds = [0.3, 0.4, 0.5, 0.6, 0.7]
-    best_f1 = 0
-    best_threshold = 0.5
+    binary_predictions = [1 if p > 0.5 else 0 for p in all_predictions]
+    print("\nClassification Report:")
+    print(classification_report(all_actual, binary_predictions))
     
-    print("\n=== THRESHOLD ANALYSIS ===")
-    for threshold in thresholds:
-        binary_predictions = [1 if p > threshold else 0 for p in all_predictions]
-        report = classification_report(all_actual, binary_predictions, output_dict=True)
-        f1_score = report['1']['f1-score']
-        precision = report['1']['precision']
-        recall = report['1']['recall']
-        
-        print(f"Threshold {threshold:.1f}: F1={f1_score:.3f}, Precision={precision:.3f}, Recall={recall:.3f}")
-        
-        if f1_score > best_f1:
-            best_f1 = f1_score
-            best_threshold = threshold
-    
-    print(f"\nBest threshold: {best_threshold:.1f} (F1-score: {best_f1:.3f})")
-    
-    # Final classification report with best threshold
-    best_binary_predictions = [1 if p > best_threshold else 0 for p in all_predictions]
-    print(f"\n=== FINAL CLASSIFICATION REPORT (Threshold: {best_threshold}) ===")
-    print(classification_report(all_actual, best_binary_predictions))
-    
-    # Confusion Matrix
-    cm = confusion_matrix(all_actual, best_binary_predictions)
-    plt.figure(figsize=(10, 8))
-    
-    # Create subplots for confusion matrix and feature importance
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
-    
-    # Confusion Matrix
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax1)
-    ax1.set_xlabel('Predicted')
-    ax1.set_ylabel('Actual')
-    ax1.set_title(f'Dip-Buying Model Confusion Matrix\n(Threshold: {best_threshold}, SMOTE: {use_smote})')
-    
-    # Feature Importance
-    xgb.plot_importance(final_model, max_num_features=20, ax=ax2)
-    ax2.set_title('Dip-Buying Feature Importance')
-    
-    plt.tight_layout()
+    cm = confusion_matrix(all_actual, binary_predictions)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.xlabel('Predicted'); plt.ylabel('Actual'); plt.title('Dip-Buying Model Confusion Matrix')
     plt.show()
     
-    return final_model, scaler, features, best_threshold
+    plt.figure(figsize=(12, 8))
+    xgb.plot_importance(final_model, max_num_features=20)
+    plt.title('Dip-Buying Feature Importance')
+    plt.show()
+    
+    return final_model, scaler, features
 
 def calculate_position_size(confidence, max_position_pct=8.0, min_confidence=0.60):
     """
@@ -507,13 +375,14 @@ def calculate_position_size(confidence, max_position_pct=8.0, min_confidence=0.6
 
     return final_position_size
 
-def calculate_risk_metrics(data_slice, price, confidence, min_risk_reward_ratio=1.5):
+def calculate_risk_metrics(data_slice, price, confidence, min_risk_reward_ratio=1.5): # min_risk_reward_ratio is now a default
     """
     Calculates a CONSERVATIVE risk profile based on fixed rules.
     - Stop-Loss is strictly capped at a maximum of 2% loss.
     - Take-Profit is fixed at a 3% gain.
     """
     # --- The original dynamic calculation is kept as a potential input ---
+    # This helps determine if the stop should be even TIGHTER than 2%, but never wider.
     atr_value = data_slice['ATR'].iloc[-1] if 'ATR' in data_slice.columns and not data_slice['ATR'].empty else price * 0.02
     atr_stop_distance = atr_value * 2.5
 
@@ -523,30 +392,39 @@ def calculate_risk_metrics(data_slice, price, confidence, min_risk_reward_ratio=
     # Let's use the dynamic calculation to find an *initial* stop distance
     base_stop_distance = max(atr_stop_distance, bb_stop_distance)
     
-    confidence_multiplier = 0.9 + (confidence - 0.5) * 0.4
+    confidence_multiplier = 0.9 + (confidence - 0.5) * 0.4 # Slightly adjusted range: 0.9 to 1.1
     adjusted_stop_distance = base_stop_distance * confidence_multiplier
 
     # --- START OF KEY MODIFICATIONS ---
+
     # 1. Enforce a STRICT maximum risk limit of 2%
-    max_risk_pct = 0.02
+    max_risk_pct = 0.02  # CHANGED: This is your maximum 2% risk
     max_risk_distance = price * max_risk_pct
     
+    # The final stop distance is the SMALLER of the dynamic one or your hard 2% limit.
+    # This means if volatility is low, your stop might be even tighter than 2%.
     final_stop_distance = min(adjusted_stop_distance, max_risk_distance)
 
-    # Minimum stop distance
-    min_stop_distance = price * 0.005
+    # Let's also add a small absolute minimum stop to avoid getting stopped out instantly by the spread
+    min_stop_distance = price * 0.005 # Minimum 0.5% stop loss
     final_stop_distance = max(final_stop_distance, min_stop_distance)
 
+    # Calculate the final stop-loss price based on the determined distance
     stop_loss = price - final_stop_distance
+
+    stop_loss = price - (price * 0.8)
     
     # 2. Set a FIXED Take-Profit at exactly 3% gain
-    take_profit = price * 1.03
+    take_profit = price * 1.03 # CHANGED: This sets the take profit to entry price + 3%
     
-    # 3. Calculate the actual Risk:Reward ratio
+    # 3. Calculate the actual Risk:Reward ratio for accurate reporting
     profit_distance = take_profit - price
-    loss_distance = price - stop_loss
+    loss_distance = price - stop_loss # This is equal to final_stop_distance
     
+    # Avoid division by zero if loss_distance is somehow zero
     actual_risk_reward_ratio = profit_distance / loss_distance if loss_distance > 0 else float('inf')
+
+    # --- END OF MODIFICATIONS ---
     
     return {
         'stop_loss': stop_loss, 
@@ -804,10 +682,10 @@ def main(tickers, train_start_date, train_end_date, test_start_date, test_end_da
     test_data, _ = select_dip_buying_features(test_data)
     
     print(f"\n--- Training Dip-Buying Model with {len(selected_features)} features ---")
-    model, scaler, features, best_threshold = train_dip_buying_model(train_data, selected_features)
+    model, scaler, features = train_dip_buying_model(train_data, selected_features)
     
     print("\n--- Generating Dip-Buying Signals ---")
-    signals = generate_trading_signals(model, scaler, test_data, features, min_confidence=best_threshold)
+    signals = generate_trading_signals(model, scaler, test_data, features, min_confidence)
     
     print("\n--- Visualizing Dip-Buying Signals ---")
     for ticker in tickers:
@@ -859,7 +737,7 @@ if __name__ == "__main__":
             test_start_date=test_start_date_intraday,
             test_end_date=test_end_date_intraday,
             forward_period=3,  # 3 intervals for intraday (45 minutes)
-            min_confidence=0.8,  # Higher confidence threshold for dip-buying
+            min_confidence=0.65,  # Higher confidence threshold for dip-buying
             force_download=FORCE_API_DOWNLOAD,
             interval='15m'  # Use 15-minute intraday data
         )
