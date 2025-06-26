@@ -325,10 +325,10 @@ class CryptoBacktester:
 if __name__ == "__main__":
     # --- Configuration ---
     SIGNALS_CACHE_DIR = 'signals_cache'
-    TEST_START_DATE = '2025-01-01'
+    TEST_START_DATE = '2025-06-12'
     # Use the current date to match the filename from the generator script
     #TEST_END_DATE = datetime.now().strftime('%Y-%m-%d')
-    TEST_END_DATE = '2025-05-18'
+    TEST_END_DATE = '2025-06-22'
     INITIAL_CAPITAL = 100000.0
     FEE_RATE = 0.001 # Example: 0.1% fee
     TRADE_LOG_CACHE_DIR = 'trade_logs'
