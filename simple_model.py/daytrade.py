@@ -609,35 +609,22 @@ def select_features_for_model(data):
     # Define a comprehensive list of features.
     # Features like SMA_200 are removed as they are too slow for 15-minute intervals.
     base_selected_features = [
-        'Log_Return', 'Daily_Return', 'Volume_Change', 'Price_Volume_Ratio',
+        'Volume_Change', 'Price_Volume_Ratio',
         'SMA_5', 'SMA_20', 'SMA_50', 
         'EMA_12', 'EMA_26', 'EMA_50',
         'BB_Upper', 'BB_Middle', 'BB_Lower', 'BB_Width', 'BB_PercentB',
-        'Ichimoku_Conversion_Line', 'Ichimoku_Base_Line', 'Ichimoku_Leading_Span_A',
-        'Ichimoku_Leading_Span_B', 
-        'ATR', 'Normalized_ATR', 'Interval_Volatility_20', # Changed from Volatility_20
         'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist', 'Momentum', 'Stoch_K', 'Stoch_D',
         'ADX', 'Williams_R', 'CCI',
-        'Momentum_ATR', # NEW: Volatility-Adjusted Momentum
-        'Aroon_Up', 'Aroon_Down', 'Aroon_Oscillator', # NEW: Aroon Indicators
         'OBV', 'CMF', 'Money_Flow_Index',
-        'Parabolic_SAR', 'High_Low_Range', 'HL_Range_Ratio', 'Open_Close_Range', 'OC_Range_Ratio',
-        'Relative_Candle_Body', 'Upper_Shadow_Ratio', 'Lower_Shadow_Ratio', # NEW: Price Action Features
         'Buying_Pressure', 'Selling_Pressure', 'Support_Proximity', 'Resistance_Proximity',
-        'Log_Return_Lag1', 'Daily_Return_Lag1', 'Daily_Return_Lag2', 'Daily_Return_Lag3',
         'RSI_Lag1', 'RSI_Lag2', 'RSI_Lag3',
         'MACD_Lag1', 'MACD_Signal_Lag1', 'MACD_Hist_Lag1',
         'Volume_Change_Lag1', 'Volume_Change_Lag2',
         'RSI_Overbought', 'RSI_Oversold', 'ADX_Strong_Trend', 'Volume_Price_Correlation',
         'Open_vs_Close_Relative',
         'OBV_EMA', 'OBV_Change_5',
-        'CDLENGULFING', 'CDLHAMMER', 'CDLDOJI', 'CDLHARAMI', 'CDLMORNINGSTAR',
-        'CDLEVENINGSTAR', 'CDLMARUBOZU', 'CDLSPINNINGTOP',
         'KC_Middle', 'KC_Upper', 'KC_Lower', 'KC_Width',
         'Accumulation_Distribution', 'AD_ROC', 
-        'ROC_5', 'ROC_10',
-        'Stoch_K_D_Diff', 'Stoch_Overbought', 'Stoch_Oversold',
-        'SMA5_SMA20_Cross', 'Price_vs_EMA12',
 
         # Newly added features:
         'VWAP_Rolling',
