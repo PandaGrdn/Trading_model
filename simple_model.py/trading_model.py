@@ -423,8 +423,7 @@ def main(tickers, train_start_date, train_end_date, test_start_date, test_end_da
 
 if __name__ == "__main__":
     crypto_tickers = [
-        'BTC-USD', 'ETH-USD', 'SOL-USD', 'ADA-USD', 'XRP-USD', 
-        'AVAX-USD', 'LINK-USD', 'DOGE-USD'
+        'CMG'
     ]
     
     # --- Configuration ---

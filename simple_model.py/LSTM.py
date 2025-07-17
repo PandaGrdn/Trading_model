@@ -180,11 +180,13 @@ def create_prediction_targets(data, forward_period, volatility_feature_name, pro
             target_set = False
             for j, future_price in enumerate(future_prices):
                 if future_price >= profit_price:
+                    print(f"Current price is {current_close} : future is {future_price} : and profit is {profit_price} in {j}")
                     temp_group.loc[current_index, 'Target'] = 1
                     temp_group.loc[current_index, 'Future_Return'] = (future_price - current_close) / current_close
                     target_set = True
                     break
                 if future_price <= stop_loss_price:
+                    '''print(f"Current price is {current_close} : future is {future_price} : and stoploss is {stop_loss_price} in {j}")'''
                     temp_group.loc[current_index, 'Target'] = 0
                     temp_group.loc[current_index, 'Future_Return'] = (future_price - current_close) / current_close
                     target_set = True
@@ -240,7 +242,7 @@ if __name__ == '__main__':
 
     # LSTM Specific Parameters
     LOOKBACK_WINDOW = 60 # Number of past intervals to consider for each prediction
-    FORWARD_PERIOD = 8   # Number of future intervals to look for profit/stop loss
+    FORWARD_PERIOD = 4   # Number of future intervals to look for profit/stop loss
     PROFIT_ATR_MULTIPLE = 1.0 # 1.0 * ATR for profit target
     STOP_LOSS_ATR_MULTIPLE = 1.5 # 1.5 * ATR for stop loss
 
@@ -266,8 +268,8 @@ if __name__ == '__main__':
         # Create prediction targets (now also stores Calculated_Take_Profit and Calculated_Stop_Loss)
         data = data.groupby('Ticker', group_keys=False).apply(
             lambda x: create_prediction_targets(x, FORWARD_PERIOD, volatility_feature_name='Normalized_ATR',
-                                                profit_pct=0.03,
-                                                stop_loss_pct=0.02)
+                                                profit_pct=0.10,
+                                                stop_loss_pct=0.005)
         )
         
         # Drop rows with NaN targets (from create_prediction_targets or initial feature calculation)
@@ -384,52 +386,83 @@ if __name__ == '__main__':
 
         # --- STAGE 4: Plotting Signals (Ticker-specific plots) ---
         print("\n--- STAGE 4: Plotting Signals (Ticker-specific plots) ---")
-        
+
         unique_test_tickers = original_close_prices_and_tickers_test['Ticker'].unique()
+
+        # Ensure test_results DataFrame is available here for plotting
+        # It's created in STAGE 5 in the original script, so we must make sure it's accessible.
+        # For a self-contained code snippet, I'm including its creation and cooldown logic here again.
+        # In your full script, ensure `test_results` (with 'Trade_Initiated') is computed before this stage.
+
+        # Re-creating test_results and cooldown logic for clarity in this snippet:
+        test_results = pd.DataFrame({
+            'Close': original_close_prices_and_tickers_test['Close'].values,
+            'Ticker': original_close_prices_and_tickers_test['Ticker'].values,
+            'Actual_Target': y_test,
+            'Predicted_Target': y_pred.flatten(),
+            'Future_Return': original_close_prices_and_tickers_test['Future_Return'].values
+        }, index=pd.to_datetime(test_dates))
+
+        last_trade_time = {}
+        test_results['Trade_Return_With_Cooldown'] = 0.0
+        test_results['Trade_Initiated'] = False
+
+        # Make sure COOLDOWN_PERIOD_INTERVALS matches your defined COOLDOWN_PERIOD logic (e.g., 5 intervals)
+        # If your COOLDOWN_PERIOD is in hours and interval is 15m, then COOLDOWN_PERIOD * 4 intervals per hour.
+        # Assuming COOLDOWN_PERIOD is directly in intervals for this loop for simplicity.
+        COOLDOWN_PERIOD_INTERVALS = 96 # This should correspond to COOLDOWN_PERIOD in minutes for '15m' interval or intervals count
+
+        for i, row in test_results.iterrows():
+            ticker = row['Ticker']
+            current_time = i
+
+            if row['Predicted_Target'] == 1:
+                if ticker not in last_trade_time or \
+                (current_time - last_trade_time[ticker]) >= pd.Timedelta(minutes=COOLDOWN_PERIOD_INTERVALS * 15): # Assuming '15m' interval duration
+                    test_results.loc[i, 'Trade_Initiated'] = True
+                    last_trade_time[ticker] = current_time
+        # End of re-creating test_results and cooldown logic
+
 
         for current_ticker in unique_test_tickers:
             print(f"\nGenerating plots for ticker: {current_ticker}")
             
-            # Create a boolean mask directly on the aligned original_close_prices_and_tickers_test
             ticker_mask = (original_close_prices_and_tickers_test['Ticker'] == current_ticker).values 
-
-            # Filter all relevant arrays using this unified numpy boolean mask
-            # Make sure test_dates_ticker is defined correctly first.
-            # It should already be correctly sliced above, but let's be explicit:
-            test_dates_ticker = test_dates[ticker_mask] # This is crucial: get the correct dates for the ticker
-
-            # Now, construct the plot_df_ticker directly using the filtered Close prices and the correct dates
-            # We will use the original 'Close' price from the aligned data.
+            test_dates_ticker = test_dates[ticker_mask] 
             close_prices_ticker = original_close_prices_and_tickers_test.loc[ticker_mask, 'Close'].values
             
             plot_df_ticker = pd.DataFrame({
                 'Close': close_prices_ticker
-            }, index=pd.to_datetime(test_dates_ticker)) # Use the correct test_dates_ticker here
+            }, index=pd.to_datetime(test_dates_ticker))
 
             y_test_ticker = y_test[ticker_mask]
-            y_pred_ticker = y_pred[ticker_mask]
+            
+            # Define y_pred_ticker here for the *unfiltered* predictions for the current ticker
+            y_pred_ticker = y_pred[ticker_mask] # This was the missing line that you correctly identified as used in plot 1!
 
-            # Plot 1: Close Price with Actual Targets and Predicted Buy Signals
+            # 1. Plot 1: Close Price with Actual Targets and Predicted Buy Signals (with Cooldown)
             plt.figure(figsize=(16, 8))
             plt.plot(plot_df_ticker.index, plot_df_ticker['Close'], label='Close Price', color='blue', alpha=0.8)
 
-            # Ensure y_test_series_aligned and y_pred_series_aligned have the *exact same index* as plot_df_ticker
             y_test_series_aligned = pd.Series(y_test_ticker, index=plot_df_ticker.index)
-            y_pred_series_aligned = pd.Series(y_pred_ticker.flatten(), index=plot_df_ticker.index)
-
-            # Filter plot_df_ticker based on actual and predicted signals
-            actual_buy_signals_df = plot_df_ticker[y_test_series_aligned == 1]
-            predicted_buy_signals_df = plot_df_ticker[y_pred_series_aligned == 1]
+            
+            # Filter test_results for the current ticker and apply cooldown filter
+            # Use the 'Trade_Initiated' column from the already processed test_results DataFrame
+            predicted_buy_signals_with_cooldown_df = test_results[
+                (test_results['Ticker'] == current_ticker) &
+                (test_results['Trade_Initiated'] == True)
+            ].copy()
 
             # Plot actual buy targets
+            actual_buy_signals_df = plot_df_ticker[y_test_series_aligned == 1]
             plt.scatter(actual_buy_signals_df.index, actual_buy_signals_df['Close'],
                         marker='o', color='gold', s=100, label='Actual Buy Target (1)', zorder=4, edgecolor='black')
 
-            # Plot predicted buy signals
-            plt.scatter(predicted_buy_signals_df.index, predicted_buy_signals_df['Close'],
-                        marker='^', color='green', s=120, label='Predicted Buy Signal (1)', zorder=5)
+            # Plot predicted buy signals WITH COOLDOWN
+            plt.scatter(predicted_buy_signals_with_cooldown_df.index, predicted_buy_signals_with_cooldown_df['Close'],
+                        marker='^', color='green', s=120, label='Predicted Buy Signal (1) (with Cooldown)', zorder=5)
 
-            plt.title(f'{current_ticker} Close Price with Actual Targets and Predicted Buy Signals (Test Set)')
+            plt.title(f'{current_ticker} Close Price with Actual Targets and Predicted Buy Signals (Test Set, with Cooldown)')
             plt.xlabel('Date')
             plt.ylabel('Price')
             plt.legend()
@@ -437,29 +470,20 @@ if __name__ == '__main__':
             plt.tight_layout()
             plt.show()
 
-            # Plot 2: Actual vs. Predicted Targets Over Time
-            # This plot should now also look correct as test_dates_ticker is correctly aligned.
+            # 2. Plot 2: Actual vs. Predicted Targets Over Time (with Cooldown in Predicted)
             plt.figure(figsize=(16, 6))
             plt.plot(pd.to_datetime(test_dates_ticker), y_test_ticker, label='Actual Target', color='darkorange', marker='.', linestyle='None', alpha=0.6)
-            plt.plot(pd.to_datetime(test_dates_ticker), y_pred_ticker, label='Predicted Target', color='purple', marker='x', linestyle='None', alpha=0.6)
             
-            plt.title(f'{current_ticker} Actual vs. Predicted Targets (Test Set)')
-            plt.xlabel('Date')
-            plt.ylabel('Target Value (0 or 1)')
-            plt.yticks([0, 1])
-            plt.legend()
-            plt.grid(True)
-            plt.tight_layout()
-            plt.show()
+            # NOW CORRECTLY USE THE COOLDOWN-FILTERED PREDICTIONS HERE
+            # Create a series of zeros, then fill in 1s where 'Trade_Initiated' is True for this ticker
+            y_pred_with_cooldown_ticker = np.zeros_like(y_test_ticker, dtype=int)
+            # Align by index to ensure correct assignment from test_results to y_pred_with_cooldown_ticker
+            aligned_trade_initiated_for_ticker = test_results.loc[plot_df_ticker.index, 'Trade_Initiated'].values
+            y_pred_with_cooldown_ticker[aligned_trade_initiated_for_ticker] = 1
 
+            plt.plot(pd.to_datetime(test_dates_ticker), y_pred_with_cooldown_ticker, label='Predicted Target (with Cooldown)', color='purple', marker='x', linestyle='None', alpha=0.6)
             
-            # Plot 2: Actual vs. Predicted Targets Over Time
-            # For this plot, using test_dates_ticker for x-axis is fine as y_test_ticker and y_pred_ticker are aligned with it.
-            plt.figure(figsize=(16, 6))
-            plt.plot(pd.to_datetime(test_dates_ticker), y_test_ticker, label='Actual Target', color='darkorange', marker='.', linestyle='None', alpha=0.6)
-            plt.plot(pd.to_datetime(test_dates_ticker), y_pred_ticker, label='Predicted Target', color='purple', marker='x', linestyle='None', alpha=0.6)
-            
-            plt.title(f'{current_ticker} Actual vs. Predicted Targets (Test Set)')
+            plt.title(f'{current_ticker} Actual vs. Predicted Targets (Test Set, Predicted with Cooldown)')
             plt.xlabel('Date')
             plt.ylabel('Target Value (0 or 1)')
             plt.yticks([0, 1])
@@ -560,7 +584,8 @@ if __name__ == '__main__':
         # This DataFrame will be aligned by index with X, y, all_indices
         test_data_for_signals = original_info_all_sequences.iloc[test_index].copy() # CORRECTED LINE
 
-        MIN_CONFIDENCE_FOR_SIGNAL=0.60
+        MIN_CONFIDENCE_FOR_SIGNAL=0.55
+        max_position_pct = 20
         # Add the predicted signal and confidence
         test_data_for_signals['Signal'] = y_pred.flatten()
         test_data_for_signals['Confidence'] = y_pred_proba.flatten()
@@ -575,7 +600,7 @@ if __name__ == '__main__':
         confidence_series = test_data_for_signals['Confidence']
         
         # Calculate position_size_pct
-        test_data_for_signals['Position_Size_Pct'] = 1 / (1 + np.exp(-k * (confidence_series - x0)))
+        test_data_for_signals['Position_Size_Pct'] = ((confidence_series - MIN_CONFIDENCE_FOR_SIGNAL) * (max_position_pct))/ (1.0 - MIN_CONFIDENCE_FOR_SIGNAL + 1e-9)
 
         # Select columns required by the backtester, including the newly added calculated levels
         signals_to_save_columns = [
