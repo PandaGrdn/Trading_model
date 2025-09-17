@@ -155,6 +155,18 @@ def create_prediction_targets(data, forward_period, volatility_feature_name, pro
             current_index = temp_group.index[i]
             current_volatility = temp_group[volatility_feature_name].iloc[i]
 
+            # --- Add these lines for debugging ---
+            if i + 1 < len(temp_group): # Ensure next index exists
+                next_close = temp_group['Close'].iloc[i+1]
+                next_index = temp_group.index[i+1]
+                time_diff = next_index - current_index
+                price_change_pct = ((next_close - current_close) / current_close) * 100
+                if abs(price_change_pct) > 5: # Only print if it's a suspicious jump (e.g., > 5%)
+                    print(f"DEBUG: Ticker: {ticker}, Current Time: {current_index}, Current Close: {current_close:.2f}")
+                    print(f"DEBUG: Next Time: {next_index}, Next Close: {next_close:.2f}")
+                    print(f"DEBUG: Time Difference: {time_diff}, Price Change %: {price_change_pct:.2f}%")
+            # --- End debug lines ---
+
             # Handle cases where volatility is NaN or zero
             if pd.isna(current_volatility) or current_volatility <= 1e-9:
                 temp_group.loc[current_index, 'Target'] = 0
@@ -180,7 +192,6 @@ def create_prediction_targets(data, forward_period, volatility_feature_name, pro
             target_set = False
             for j, future_price in enumerate(future_prices):
                 if future_price >= profit_price:
-                    print(f"Current price is {current_close} : future is {future_price} : and profit is {profit_price} in {j}")
                     temp_group.loc[current_index, 'Target'] = 1
                     temp_group.loc[current_index, 'Future_Return'] = (future_price - current_close) / current_close
                     target_set = True
@@ -237,7 +248,7 @@ if __name__ == '__main__':
     tickers = ['BTC-USD', 'ETH-USD'] # Added ETH-USD for multi-ticker testing
     # Adjust date range to be within the last 730 days for 1h interval data from Yahoo Finance
     end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d') # Roughly 1 year ago
+    start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d') # Roughly 1 year ago
     interval = '15m'
 
     # LSTM Specific Parameters
